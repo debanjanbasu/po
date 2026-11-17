@@ -6,6 +6,8 @@
 //! `po-ui`/`po-app` is a reactive projection of this state.
 
 pub mod agent;
+pub mod app_mode;
+pub mod auth;
 pub mod commands;
 pub mod config;
 pub mod model;
@@ -14,4 +16,23 @@ pub mod session;
 pub mod tools;
 
 #[cfg(all(target_os = "macos", feature = "local-engine"))]
-pub mod microai;
+pub mod nanoai;
+
+/// Format a transcript as a model prompt (delegates to the nano-ai adapter).
+#[cfg(all(target_os = "macos", feature = "local-engine"))]
+#[must_use]
+pub fn nanoai_prompt(messages: &[model::ChatMessage]) -> String {
+    nanoai::format_prompt(messages)
+}
+
+/// Format a transcript as a model prompt (plain fallback when the local
+/// engine is not compiled in; used by the UI echo path and tests).
+#[cfg(not(all(target_os = "macos", feature = "local-engine")))]
+#[must_use]
+pub fn nanoai_prompt(messages: &[model::ChatMessage]) -> String {
+    messages
+        .iter()
+        .map(|m| format!("{}: {}", m.role.role_label(), m.content.trim()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}

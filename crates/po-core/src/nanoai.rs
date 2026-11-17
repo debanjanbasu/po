@@ -1,13 +1,14 @@
-//! Adapter for the local micro-ai engine.
+//! Adapter for the local nano-ai engine.
 //!
-//! `micro-engine` is consumed straight from the micro-ai repository, pinned
-//! to a commit. Because we own micro-ai, this adapter is deliberately thin:
+//! `micro-engine` is consumed straight from the nano-ai repository, pinned
+//! to a commit. Because we own nano-ai, this adapter is deliberately thin:
 //! it owns the prompt format, the streaming bridge, and the translation from
 //! engine pieces into po's [`StreamEvent`]s.
 
 use std::path::Path;
 
-use micro_engine::model::{AsyncEngineHandle, GenerationReport, SamplingParams};
+use nano_engine::model::{AsyncEngineHandle, GenerationReport};
+use nano_engine::sampler::SamplingParams;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::model::{ChatMessage, ChatRole, Provider, StreamEvent};
@@ -16,13 +17,13 @@ use crate::model::{ChatMessage, ChatRole, Provider, StreamEvent};
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
     /// The engine refused to load the model.
-    #[error("micro-ai engine error: {0}")]
-    Engine(#[from] micro_engine::Error),
+    #[error("nano-ai engine error: {0}")]
+    Engine(#[from] nano_engine::Error),
     /// The model file could not be read.
     #[error("could not read model at {0}: {1}")]
     Io(std::path::PathBuf, #[source] std::io::Error),
     /// The engine's worker thread went away.
-    #[error("micro-ai engine worker stopped")]
+    #[error("nano-ai engine worker stopped")]
     WorkerGone,
 }
 
@@ -77,7 +78,7 @@ impl LocalEngine {
         Ok(report)
     }
 
-    /// Generate a completion for a transcript, using micro-ai's chat format.
+    /// Generate a completion for a transcript, using nano-ai's chat format.
     ///
     /// # Errors
     /// Returns an error when generation fails.
@@ -92,7 +93,7 @@ impl LocalEngine {
     }
 }
 
-/// Format a transcript as the plain-text prompt micro-ai expects.
+/// Format a transcript as the plain-text prompt nano-ai expects.
 ///
 /// The format mirrors the roles used by the local model's chat template:
 /// `user:` for the human, `assistant:` for the model, `system:` for notices.

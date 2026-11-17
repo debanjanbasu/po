@@ -310,7 +310,7 @@ pub fn transition(state: &AgentState, event: &AgentEvent) -> Transition {
             }
         }
         (
-            AgentState::Streaming { turn, buffer },
+            AgentState::Streaming { turn: _, buffer },
             AgentEvent::TurnComplete { message },
         ) => {
             let mut recorded = message.clone();

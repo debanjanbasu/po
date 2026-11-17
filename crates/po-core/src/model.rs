@@ -63,6 +63,19 @@ pub enum ChatRole {
     Tool,
 }
 
+impl ChatRole {
+    /// Lowercase label used in plain-text prompts and logs.
+    #[must_use]
+    pub fn role_label(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Assistant => "assistant",
+            Self::System => "system",
+            Self::Tool => "tool",
+        }
+    }
+}
+
 /// A tool the model asked to run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCall {

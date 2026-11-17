@@ -3385,43 +3385,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "micro-engine"
-version = "0.1.0"
-source = "git+https://github.com/debanjanbasu/micro-ai.git?rev=5c9b19fbf3f6a5d98d735dc6384d32d7e909776e#5c9b19fbf3f6a5d98d735dc6384d32d7e909776e"
-dependencies = [
- "bytemuck",
- "half",
- "image",
- "memmap2",
- "micro-metal",
- "regex-syntax",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "thiserror 2.0.21",
- "tokio",
- "unicode-normalization-alignments",
- "zstd",
-]
-
-[[package]]
-name = "micro-metal"
-version = "0.1.0"
-source = "git+https://github.com/debanjanbasu/micro-ai.git?rev=5c9b19fbf3f6a5d98d735dc6384d32d7e909776e#5c9b19fbf3f6a5d98d735dc6384d32d7e909776e"
-dependencies = [
- "block2 0.6.2",
- "bytemuck",
- "dispatch2",
- "half",
- "objc2 0.6.5",
- "objc2-core-foundation",
- "objc2-foundation 0.3.2",
- "objc2-io-surface",
- "objc2-metal 0.3.2",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "miniz_oxide"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3535,6 +3498,43 @@ dependencies = [
  "spirv",
  "thiserror 2.0.21",
  "unicode-ident",
+]
+
+[[package]]
+name = "nano-engine"
+version = "0.1.0"
+source = "git+https://github.com/debanjanbasu/nano-ai.git?rev=5aabab6d607a96dd49c0a5c976921fc30a63d57f#5aabab6d607a96dd49c0a5c976921fc30a63d57f"
+dependencies = [
+ "bytemuck",
+ "half",
+ "image",
+ "memmap2",
+ "nano-metal",
+ "regex-syntax",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "thiserror 2.0.21",
+ "tokio",
+ "unicode-normalization-alignments",
+ "zstd",
+]
+
+[[package]]
+name = "nano-metal"
+version = "0.1.0"
+source = "git+https://github.com/debanjanbasu/nano-ai.git?rev=5aabab6d607a96dd49c0a5c976921fc30a63d57f#5aabab6d607a96dd49c0a5c976921fc30a63d57f"
+dependencies = [
+ "block2 0.6.2",
+ "bytemuck",
+ "dispatch2",
+ "half",
+ "objc2 0.6.5",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "objc2-io-surface",
+ "objc2-metal 0.3.2",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -4529,9 +4529,10 @@ dependencies = [
 name = "po-core"
 version = "0.1.0"
 dependencies = [
- "micro-engine",
+ "nano-engine",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "similar",
  "tempfile",
  "thiserror 2.0.21",
@@ -4547,6 +4548,7 @@ dependencies = [
  "po-core",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

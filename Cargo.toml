@@ -26,6 +26,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs", "io-util", "process", "time"] }
 tracing = "0.1"
 similar = "2"
+sha2 = "0.10"
 
 # Optimized profiles, ported from the sibling `oo` project's battle-tested
 # cargo configuration (adapted for a native-only, non-wasm app).

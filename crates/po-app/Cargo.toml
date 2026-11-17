@@ -1,0 +1,31 @@
+[package]
+name = "po-app"
+description = "po — a native, chat-driven AI desktop harness built on gpui-ce and micro-ai."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "po"
+path = "src/main.rs"
+
+[dependencies]
+po-core.workspace = true
+po-ui.workspace = true
+gpui.workspace = true
+gpui-platform.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+dirs.workspace = true
+similar.workspace = true
+
+# The local micro-ai engine is built for Apple Silicon only; enable it there.
+[target.'cfg(target_os = "macos")'.dependencies]
+po-core = { workspace = true, features = ["local-engine"] }

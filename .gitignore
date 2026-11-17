@@ -1,0 +1,26 @@
+/target
+**/*.rs.bk
+*.pdb
+
+# local model weights and generated assets
+/models/
+*.bin
+*.safetensors
+
+# local runtime data
+/.po-data/
+/data/
+/sessions/
+
+# secrets — never commit
+.env
+.env.*
+*.pem
+*.key
+secrets.toml
+config.local.toml
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/

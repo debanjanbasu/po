@@ -1,0 +1,32 @@
+[package]
+name = "po-core"
+description = "Platform-agnostic AI harness core for po: sessions, agent state machine, tools, commands, providers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+dirs.workspace = true
+similar.workspace = true
+
+# micro-ai is consumed directly from its GitHub repository, pinned to a
+# specific commit so builds are reproducible. The upstream workspace is
+# `publish = false`, so it is only reachable over git.
+micro-engine = { git = "https://github.com/debanjanbasu/micro-ai.git", rev = "5c9b19fbf3f6a5d98d735dc6384d32d7e909776e", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = []
+# The local engine is Apple-Silicon only; po-app enables this feature only on
+# macOS targets. Other platforms use the OpenAI-compatible remote provider.
+local-engine = ["dep:micro-engine"]

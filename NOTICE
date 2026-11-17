@@ -1,0 +1,20 @@
+po
+Copyright 2026 Debanjan Basu
+
+This product includes software developed as part of the following projects:
+
+* gpui-ce — https://github.com/gpui-ce/gpui-ce — Apache License 2.0
+  Used as the GUI framework. The crate is published as `gpui-ce` with the library name
+  `gpui`; the companion platform crate is `gpui_ce_platform`.
+
+* micro-ai — https://github.com/debanjanbasu/micro-ai — MIT OR Apache-2.0
+  Used as the local inference engine (`micro-engine`). Consumed directly from the upstream
+  Git repository and pinned to a specific commit.
+
+* oh-my-pi — https://github.com/can1357/oh-my-pi — MIT License
+  Used as an architectural reference only. po reimplements the session-log, command, and
+  approval patterns; no oh-my-pi source code is copied into this repository.
+
+* IBM 3270 font — https://github.com/rbanffy/3270font
+  The bundled 3270 typeface is redistributed under the terms of its own license, which is
+  reproduced in assets/fonts/LICENSE-3270.txt.

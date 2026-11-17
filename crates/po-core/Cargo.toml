@@ -12,9 +12,6 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-tracing.workspace = true
-anyhow.workspace = true
-dirs.workspace = true
 similar.workspace = true
 
 # micro-ai is consumed directly from its GitHub repository, pinned to a

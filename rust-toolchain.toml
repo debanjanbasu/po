@@ -1,7 +1,7 @@
 [toolchain]
-# gpui-ce 0.3.0 requires Rust >= 1.95; micro-ai (micro-engine) requires
-# Rust >= 1.101, which is why the pinned toolchain is newer than the GPUI
-# minimum. The pinned nightly matches the toolchain used to verify this
-# workspace.
-channel = "nightly-2026-11-01"
+# Bleeding-edge nightly is preferred, but the newest nightly ICEs while
+# compiling the third-party `pathfinder_geometry` crate and trips an
+# async-drop cycle bug in gpui-ce. nightly-2026-09-15 builds the full graph
+# and satisfies gpui-ce (>= 1.95) and micro-engine (>= 1.101).
+channel = "nightly-2026-09-15"
 components = ["rustfmt", "clippy"]

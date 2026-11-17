@@ -9,6 +9,9 @@ pub mod agent;
 pub mod commands;
 pub mod config;
 pub mod model;
-pub mod provider;
+pub mod paths;
 pub mod session;
 pub mod tools;
+
+#[cfg(all(target_os = "macos", feature = "local-engine"))]
+pub mod microai;

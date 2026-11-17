@@ -1,0 +1,55 @@
+# po's cargo configuration, ported from the sibling `oo` project and adapted
+# for a native-only (no wasm) app.
+
+[env]
+# Native deployment targets are explicit compatibility floors; update them
+# deliberately with the bundle settings.
+MACOSX_DEPLOYMENT_TARGET = "27.0"
+
+# Universal rustflags for every compilation target.
+# MUST live under [target.'cfg(all())'], not [build]: cargo treats
+# build.rustflags and target.*.rustflags as mutually exclusive sources
+# (target wins), so the per-profile sections below would silently drop
+# anything placed in build.rustflags. cfg-based entries JOIN with the
+# profile-specific entries instead of replacing them.
+[target.'cfg(all())']
+rustflags = [
+    "--cfg", "tokio_unstable",
+    # Parallel rustc frontend, sized to the performance-core count.
+    "-Zunstable-options", "--jobs-frontend=32",
+]
+
+# ──────────────────────────────────────────────────────────────────
+# build-std: rebuild core/alloc/std from source so the profile-level
+# `panic = "immediate-abort"` (Cargo.toml) strips all panic formatting
+# strings from std too. Requires: `rustup component add rust-src`
+# ──────────────────────────────────────────────────────────────────
+[unstable]
+build-std = ["std", "panic_abort", "core", "alloc"]
+panic-abort-tests = true
+profile-rustflags = true
+panic-immediate-abort = true
+# Fingerprint by content checksum instead of mtime — kills spurious
+# rebuilds after branch switches and checkout churn.
+checksum-freshness = true
+# gitoxide fetches + shallow clones for git deps (micro-ai is a large repo).
+gitoxide = "fetch"
+git = "shallow-deps"
+# Store crate metadata only in .rmeta files — smaller target/ dir.
+embed-metadata = false
+
+# Dev-profile speed flags: share generic instantiations across crates and
+# skip MIR inlining, so a dependency change recompiles less.
+[profile.dev]
+rustflags = [
+    "-Zshare-generics=y",
+    "-Zinline-mir=no",
+    "-Zbinary-dep-depinfo",
+]
+
+# Release-profile size/speed flags. LTO is already fat in Cargo.toml.
+[profile.release]
+rustflags = [
+    # Aggressive MIR optimisations for the shipped binary.
+    "-Zmir-opt-level=4",
+]

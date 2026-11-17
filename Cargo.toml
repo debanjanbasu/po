@@ -25,11 +25,30 @@ serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs", "io-util", "process", "time"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-anyhow = "1"
-dirs = "6"
 similar = "2"
 
+# Optimized profiles, ported from the sibling `oo` project's battle-tested
+# cargo configuration (adapted for a native-only, non-wasm app).
+[profile.dev]
+opt-level = 2
+panic = "immediate-abort"
+
+# Dependencies at O3 so a change to one crate does not recompile the world.
+[profile.dev.package."*"]
+opt-level = 3
+
+# Build scripts and proc macros run on the host: keep them fast.
+[profile.dev.build-override]
+opt-level = 3
+
 [profile.release]
-lto = "thin"
+lto = "fat"
 codegen-units = 1
+panic = "immediate-abort"
+strip = "symbols"
+# NOTE: `trim-paths = "all"` (used by oo) is an unstable cargo feature on
+# nightly-2026-09-15, so it is omitted here; `strip = "symbols"` already
+# removes the bulk of path-bearing debug info.
+
+[profile.release.build-override]
+opt-level = 3

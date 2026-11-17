@@ -119,6 +119,17 @@ impl PoApp {
         cx.notify();
     }
 
+    /// Create the root view with an explicit provider.
+    pub fn with_provider(
+        cx: &mut Context<Self>,
+        pieces: UnboundedSender<String>,
+        provider: std::sync::Arc<dyn po_core::provider::ChatProvider>,
+    ) -> Self {
+        let mut view = Self::new(cx, pieces);
+        view.provider = provider;
+        view
+    }
+
     /// Attach a persisted session so turns are recorded to disk.
     pub fn attach_live(&mut self, session: LiveSession) {
         self.sessions.push(session.id().to_string());
@@ -188,11 +199,36 @@ impl PoApp {
     /// Apply an agent event through the state machine.
     pub fn dispatch(&mut self, event: AgentEvent, cx: &mut Context<Self>) {
         let next = transition(&self.agent.clone(), &event);
+        let state = next.state.clone();
         self.agent = next.state;
+        // Project approval state into the UI: entering AwaitingToolApproval
+        // mounts a card; leaving it (approved/denied/aborted) unmounts it.
+        match (&state, self.pending_approval.is_some()) {
+            (AgentState::AwaitingToolApproval { call, .. }, false) => {
+                let call = call.clone();
+                let card = cx.new(|_| ToolApprovalCard::new(call, None));
+                self.pending_approval = Some(card);
+            }
+            (state, true) if !state.awaiting_approval() => {
+                self.pending_approval = None;
+            }
+            _ => {}
+        }
         for effect in next.effects {
             self.apply(event_label(&event), effect, cx);
         }
         cx.notify();
+    }
+
+    /// Resolve the pending approval card with the user's decision.
+    pub fn resolve_approval(&mut self, approved: bool, cx: &mut Context<Self>) {
+        self.pending_approval = None;
+        let event = if approved {
+            AgentEvent::ToolApproved
+        } else {
+            AgentEvent::ToolDenied { reason: None }
+        };
+        self.dispatch(event, cx);
     }
 
     fn apply(&mut self, source: &str, effect: po_core::agent::Effect, cx: &mut Context<Self>) {
@@ -263,10 +299,37 @@ impl PoApp {
             Effect::CompactContext => self.notice("compacting…", cx),
             Effect::Stopped => self.notice("po stopped", cx),
             Effect::RunTool { call } => {
-                self.notice(
-                    format!("tool approval: {} (run {})", call.name, call.id),
-                    cx,
-                );
+                // A tool execution is always approval-gated in the UI; the
+                // agent FSM's RunTool effect means the user already approved.
+                self.notice(format!("running {} ({})", call.name, call.id), cx);
+                let registry = po_core::tools::ToolRegistry::with_defaults(Vec::new());
+                let arguments = call.arguments.clone();
+                let name = call.name.clone();
+                let pieces = self.pieces.clone();
+                cx.spawn(async move |view, cx| {
+                    let result = registry.execute(&name, &arguments).await;
+                    let _ = view.update(cx, |this: &mut PoApp, cx| {
+                        match result {
+                            Ok(output) => {
+                                this.dispatch(
+                                    AgentEvent::ToolFinished {
+                                        tool: name.clone(),
+                                    },
+                                    cx,
+                                );
+                                this.notice(
+                                    format!("{} → {}", name, output.summary),
+                                    cx,
+                                );
+                            }
+                            Err(error) => {
+                                this.notice(format!("{name} failed: {error}"), cx);
+                            }
+                        }
+                        let _ = pieces;
+                    });
+                })
+                .detach();
             }
             Effect::UnknownCommand { input } => {
                 self.notice(format!("unknown command: {input}"), cx);
@@ -361,7 +424,7 @@ impl PoApp {
 
     // ---- rendering helpers -------------------------------------------
 
-    fn sidebar(&self, theme: &PoTheme) -> impl IntoElement {
+    fn sidebar(&self, theme: &PoTheme, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .id("po-sidebar")
             .w(px(220.))
@@ -380,16 +443,40 @@ impl PoApp {
                     .text_lg()
                     .child("po"),
             )
-            .children(self.sessions.iter().map(|session| {
+            .children(self.sessions.iter().enumerate().map(|(index, session)| {
+                let active = index == self.sessions.len() - 1;
+                let name = session.clone();
                 div()
                     .id(SharedString::from(format!("session-{session}")))
+                    .cursor_pointer()
                     .px_2()
                     .py_1()
                     .rounded_md()
+                    .when(active, |d| d.bg(theme.base_300))
                     .text_color(theme.content)
                     .font_family(theme.font_family.clone())
                     .child(session.clone())
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        // Switching clears the view; the live log keeps its rows.
+                        this.entries.clear();
+                        this.notice(format!("switched to {name}"), cx);
+                    }))
             }))
+            .child(
+                div()
+                    .id("po-session-new")
+                    .cursor_pointer()
+                    .mt_auto()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .text_color(theme.primary)
+                    .font_family(theme.font_family.clone())
+                    .child("+ new session")
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.dispatch(AgentEvent::SessionNew, cx);
+                    })),
+            )
     }
 
     fn transcript(&self, theme: &PoTheme) -> impl IntoElement {
@@ -670,7 +757,7 @@ impl Render for PoApp {
                     .flex()
                     .flex_row()
                     .min_h_0()
-                    .child(self.sidebar(&theme))
+                    .child(self.sidebar(&theme, cx))
                     .child(self.transcript(&theme)),
             )
             .when(self.palette_open, |root| {
@@ -741,7 +828,44 @@ impl Render for PoApp {
                         .absolute()
                         .bottom(px(112.))
                         .left(px(240.))
-                        .child(card),
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(card)
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .id("po-approval-approve")
+                                        .cursor_pointer()
+                                        .px_3()
+                                        .py_1()
+                                        .rounded_md()
+                                        .bg(theme.primary)
+                                        .text_color(theme.primary_content)
+                                        .child("approve")
+                                        .on_click(cx.listener(|this, _e, _w, cx| {
+                                            this.resolve_approval(true, cx);
+                                        })),
+                                )
+                                .child(
+                                    div()
+                                        .id("po-approval-deny")
+                                        .cursor_pointer()
+                                        .px_3()
+                                        .py_1()
+                                        .rounded_md()
+                                        .bg(theme.base_300)
+                                        .text_color(theme.content)
+                                        .child("deny")
+                                        .on_click(cx.listener(|this, _e, _w, cx| {
+                                            this.resolve_approval(false, cx);
+                                        })),
+                                ),
+                        ),
                 )
             })
             .child(self.composer(&theme))

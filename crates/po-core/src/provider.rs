@@ -371,3 +371,40 @@ mod tests {
         assert!(url_parts("https://example.com").is_err());
     }
 }
+
+/// The in-process nano-ai engine (Apple Silicon only, `local-engine` feature).
+///
+/// Streams engine pieces straight onto the channel; no HTTP hop.
+#[cfg(all(target_os = "macos", feature = "local-engine"))]
+#[derive(Clone)]
+pub struct LocalNanoProvider {
+    /// Handle to the running engine worker.
+    pub engine: std::sync::Arc<crate::nanoai::LocalEngine>,
+    /// Max tokens per turn.
+    pub max_new_tokens: usize,
+}
+
+#[cfg(all(target_os = "macos", feature = "local-engine"))]
+impl ChatProvider for LocalNanoProvider {
+    fn label(&self) -> String {
+        format!("nano-engine ({})", self.engine.device_name())
+    }
+
+    fn complete(
+        &self,
+        messages: &[ChatMessage],
+        pieces: Option<UnboundedSender<String>>,
+    ) -> BoxFuture<'static, Result<String, ProviderError>> {
+        let messages: Vec<ChatMessage> = messages.to_vec();
+        let engine = self.engine.clone();
+        let max_new_tokens = self.max_new_tokens;
+        Box::pin(async move {
+            let prompt = crate::nanoai::format_prompt(&messages);
+            let report = engine
+                .generate(&prompt, max_new_tokens, pieces)
+                .await
+                .map_err(|e| ProviderError::Http(e.to_string()))?;
+            Ok(report.text)
+        })
+    }
+}

@@ -13,6 +13,8 @@ pub mod config;
 pub mod model;
 pub mod paths;
 pub mod provider;
+
+pub use provider::{ChatProvider, MockEchoProvider, NanoServeProvider, ProviderError};
 pub mod session;
 pub mod session_store;
 pub mod tools;

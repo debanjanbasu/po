@@ -78,7 +78,15 @@ impl PoApp {
         let username = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
         let password = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
         let subscriptions = vec![
-            cx.subscribe(&composer, |_, _, _: &TextChanged, cx| cx.notify()),
+            cx.subscribe(&composer, |this, composer, _: &TextChanged, cx| {
+                // While the palette is open the composer doubles as the
+                // filter field; keep the query in lockstep.
+                if this.palette_open {
+                    let text = composer.read(cx).as_str().to_string();
+                    this.palette.set_query(text, &this.commands);
+                }
+                cx.notify();
+            }),
             cx.subscribe(&username, |_, _, _: &TextChanged, cx| cx.notify()),
             cx.subscribe(&password, |_, _, _: &TextChanged, cx| cx.notify()),
         ];
@@ -108,7 +116,12 @@ impl PoApp {
     pub fn toggle_palette(&mut self, cx: &mut Context<Self>) {
         self.palette_open = !self.palette_open;
         if self.palette_open {
-            self.palette = CommandPalette::new();
+            // Seed the filter with whatever the composer already holds
+            // (e.g. a half-typed "/the…"), and start on the first row.
+            let seed = self.composer_text(cx);
+            let mut palette = CommandPalette::new();
+            palette.set_query(seed.trim().to_string(), &self.commands);
+            self.palette = palette;
         }
         cx.notify();
     }
@@ -263,11 +276,33 @@ impl PoApp {
                 self.notice(format!("sessions: {list}"), cx);
             }
             Effect::SwitchSession { id } => {
-                if self.sessions.contains(&id) {
-                    self.entries.clear();
-                    self.notice(format!("switched to {id}"), cx);
-                } else {
+                let known = self.sessions.contains(&id);
+                if !known {
                     self.notice(format!("no such session: {id}"), cx);
+                } else {
+                    self.entries.clear();
+                    let id_owned = id.clone();
+                    cx.spawn(async move |view, cx| {
+                        // Reload the transcript from the JSONL log.
+                        let store = po_core::session::SessionStore::default_location();
+                        let loaded = store.and_then(|store| store.open(&id_owned));
+                        let _ = view.update(cx, |this: &mut PoApp, cx| {
+                            let loaded = loaded
+                                .map_err(po_core::session_store::LiveSessionError::from)
+                                .and_then(po_core::session_store::LiveSession::new_ready);
+                            match loaded {
+                                Ok(live) => {
+                                    if let Ok(mut guard) = this.live.lock() {
+                                        *guard = Some(live);
+                                    }
+                                    this.entries.clear();
+                                    this.notice(format!("switched to {id_owned}"), cx);
+                                }
+                                Err(error) => this.notice(format!("load failed: {error}"), cx),
+                            }
+                        });
+                    })
+                    .detach();
                 }
             }
             Effect::ForkSession { id } => {
@@ -277,7 +312,30 @@ impl PoApp {
                     id
                 };
                 self.sessions.push(name.clone());
-                self.notice(format!("forked into {name}"), cx);
+                let live = self.live.clone();
+                cx.spawn(async move |view, cx| {
+                    let forked = async move {
+                        let store = po_core::session::SessionStore::default_location()?;
+                        let snapshot = live.lock().ok().and_then(|g| g.as_ref().map(|s| s.clone()));
+                        match snapshot {
+                            Some(session) => session.fork(&store, usize::MAX).await,
+                            None => Err(po_core::session_store::LiveSessionError::Log(
+                                "no live session".into(),
+                            )),
+                        }
+                    }
+                    .await;
+                    let _ = view.update(cx, |this: &mut PoApp, cx| match forked {
+                        Ok(session) => {
+                            if let Ok(mut guard) = this.live.lock() {
+                                *guard = Some(session);
+                            }
+                            this.notice(format!("forked into {name}"), cx);
+                        }
+                        Err(error) => this.notice(format!("fork failed: {error}"), cx),
+                    });
+                })
+                .detach();
             }
             Effect::ListTools => {
                 let registry = po_core::tools::ToolRegistry::with_defaults(Vec::new());
@@ -750,6 +808,29 @@ impl Render for PoApp {
             }))
             .on_action::<po_app_actions::CommandPalette>(cx.listener(|this, _: &po_app_actions::CommandPalette, _window, cx| {
                 this.toggle_palette(cx);
+            }))
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
+                if !this.palette_open {
+                    return;
+                }
+                match event.keystroke.key.as_str() {
+                    "down" => {
+                        this.palette.next(&this.commands);
+                        cx.stop_propagation();
+                        cx.notify();
+                    }
+                    "up" => {
+                        this.palette.previous(&this.commands);
+                        cx.stop_propagation();
+                        cx.notify();
+                    }
+                    "escape" => {
+                        this.palette_open = false;
+                        cx.stop_propagation();
+                        cx.notify();
+                    }
+                    _ => {}
+                }
             }))
             .child(
                 div()

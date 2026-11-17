@@ -88,9 +88,12 @@ impl Default for Config {
 }
 
 /// Default model path, relative to the repository's `models/` directory.
+///
+/// The file itself is gitignored; `models/README.md` explains how to link a
+/// local nano-ai model checkout.
 #[must_use]
 pub fn default_model_path() -> String {
-    "models/minicpm-v-4.7-1b/minicpm-v-4.7-1b-tern4.bin".into()
+    "models/minicpm-v-4.7-1b-tern4.bin".into()
 }
 
 impl Config {

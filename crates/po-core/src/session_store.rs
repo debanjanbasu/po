@@ -58,6 +58,58 @@ impl LiveSession {
         })
     }
 
+    /// Wrap an already-persisted session synchronously.
+    ///
+    /// Prefer [`resume`](Self::resume) in async contexts.
+    ///
+    /// # Errors
+    /// Returns an error when the log cannot be read.
+    pub fn new_ready(session: Session) -> Result<Self, LiveSessionError> {
+        let path = session.path().to_path_buf();
+        let messages = session.messages()?;
+        Ok(Self {
+            id: session.id().to_string(),
+            title: session.header().title.clone(),
+            messages,
+            path,
+        })
+    }
+
+    /// Convert back into a plain [`Session`] (for forking).
+    ///
+    /// # Errors
+    /// Returns an error when the log cannot be opened.
+    pub fn into_session(&self) -> Result<Session, LiveSessionError> {
+        Ok(Session::open(&self.path)?)
+    }
+
+    /// Fork this session at `at_entry` entries into `store`.
+    ///
+    /// # Errors
+    /// Returns an error when the fork cannot be written.
+    pub async fn fork(
+        &self,
+        store: &SessionStore,
+        at_entry: usize,
+    ) -> Result<Self, LiveSessionError> {
+        let session = self.into_session()?;
+        let root = store.root().to_path_buf();
+        let at = at_entry;
+        let forked = tokio::task::spawn_blocking(move || {
+            let id = format!("{}-fork", crate::session::now_unix());
+            let dest = root.join(format!("{id}.jsonl"));
+            session.fork(dest, at)
+        })
+        .await
+        .map_err(|e| LiveSessionError::Log(e.to_string()))??;
+        Ok(Self {
+            id: forked.id().to_string(),
+            title: forked.header().title.clone(),
+            messages: forked.messages()?,
+            path: forked.path().to_path_buf(),
+        })
+    }
+
     /// Wrap an already-persisted session.
     ///
     /// # Errors

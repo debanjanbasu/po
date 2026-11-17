@@ -10,6 +10,9 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::model::ChatMessage;
 
+/// A boxed, sendable future — the dyn-compatible return type of [`ChatProvider::complete`].
+pub type BoxFuture<'a, T> = std::pin::Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
 /// Errors raised while talking to a provider.
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderError {
@@ -44,7 +47,7 @@ pub trait ChatProvider: Send + Sync {
         &self,
         messages: &[ChatMessage],
         pieces: Option<UnboundedSender<String>>,
-    ) -> impl Future<Output = Result<String, ProviderError>> + Send;
+    ) -> BoxFuture<'_, Result<String, ProviderError>>;
 }
 
 /// A deterministic provider that echoes the user's message back in chunks.
@@ -82,12 +85,15 @@ impl ChatProvider for MockEchoProvider {
         "mock (echo)".into()
     }
 
-    async fn complete(
+    fn complete(
         &self,
         messages: &[ChatMessage],
         pieces: Option<UnboundedSender<String>>,
-    ) -> Result<String, ProviderError> {
-        let reply = self.reply_for(messages);
+    ) -> BoxFuture<'static, Result<String, ProviderError>> {
+        let messages: Vec<ChatMessage> = messages.to_vec();
+        let reply = self.reply_for(&messages);
+        Box::pin(async move {
+            let _ = &messages;
         // Stream word-by-word so the UI's incremental path is exercised.
         for word in reply.split_inclusive(char::is_whitespace) {
             if let Some(tx) = &pieces {
@@ -96,6 +102,7 @@ impl ChatProvider for MockEchoProvider {
             tokio::time::sleep(std::time::Duration::from_millis(8)).await;
         }
         Ok(reply)
+        })
     }
 }
 
@@ -152,12 +159,22 @@ impl ChatProvider for NanoServeProvider {
         format!("serve: {}", self.model)
     }
 
-    async fn complete(
+    fn complete(
         &self,
         messages: &[ChatMessage],
         pieces: Option<UnboundedSender<String>>,
-    ) -> Result<String, ProviderError> {
-        if !self.base_url.starts_with("http://") {
+    ) -> BoxFuture<'static, Result<String, ProviderError>> {
+        let messages: Vec<ChatMessage> = messages.to_vec();
+        let base_url = self.base_url.clone();
+        let api_key_owned = self.api_key.clone();
+        let model = self.model.clone();
+        Box::pin(async move {
+        let provider = NanoServeProvider {
+            base_url,
+            api_key: api_key_owned,
+            model,
+        };
+        if !provider.base_url.starts_with("http://") {
             // std's TcpStream client only speaks plaintext http; https needs a
             // TLS stack, which po deliberately does not vendor.
             return Err(ProviderError::Config(
@@ -165,15 +182,16 @@ impl ChatProvider for NanoServeProvider {
             ));
         }
 
-        let body = self.request_body(messages);
-        let endpoint = self.endpoint();
-        let api_key = self.api_key.clone();
+        let body = provider.request_body(&messages);
+        let endpoint = provider.endpoint();
+        let api_key = provider.api_key.clone();
         let stream = tokio::task::spawn_blocking(move || {
             post_sse(&endpoint, api_key.as_deref(), &body, pieces.as_ref())
         })
         .await
         .map_err(|e| ProviderError::Http(e.to_string()))??;
         Ok(stream)
+        })
     }
 }
 

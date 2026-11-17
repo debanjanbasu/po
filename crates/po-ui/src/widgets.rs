@@ -15,8 +15,14 @@ use po_core::agent::{AgentEvent, AgentState, transition};
 use po_core::app_mode::{AppEvent, AppMode};
 use po_core::commands::CommandRegistry;
 use po_core::model::ChatMessage;
+use po_core::provider::{ChatProvider, MockEchoProvider};
+use po_core::session_store::LiveSession;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::approval::ToolApprovalCard;
+use crate::palette::{CommandPalette, filter};
+use crate::settings::SettingsScreen;
 use crate::theme::{PoTheme, ThemeMode};
 
 /// One row in the transcript.
@@ -47,6 +53,20 @@ pub struct PoApp {
     pub pieces: UnboundedSender<String>,
     /// Slash-command registry shared by chat and palette.
     pub commands: CommandRegistry,
+    /// The persisted transcript behind `entries` (None until first turn).
+    pub live: Arc<Mutex<Option<LiveSession>>>,
+    /// cmd-k palette visibility + state.
+    pub palette: CommandPalette,
+    /// Whether the palette overlay is showing.
+    pub palette_open: bool,
+    /// Whether the settings screen is showing.
+    pub settings_open: bool,
+    /// Cached settings view entity.
+    pub settings_view: Option<Entity<SettingsScreen>>,
+    /// Pending tool call awaiting approval (rendered as a card).
+    pub pending_approval: Option<Entity<ToolApprovalCard>>,
+    /// The completion source for turns.
+    pub provider: Arc<dyn ChatProvider>,
     /// Subscriptions kept alive for the view's lifetime.
     _subscriptions: Vec<Subscription>,
 }
@@ -73,8 +93,36 @@ impl PoApp {
             notice: None,
             pieces,
             commands: CommandRegistry::new(),
+            live: Arc::new(Mutex::new(None)),
+            palette: CommandPalette::new(),
+            palette_open: false,
+            settings_open: false,
+            settings_view: None,
+            pending_approval: None,
+            provider: Arc::new(MockEchoProvider::default()),
             _subscriptions: subscriptions,
         }
+    }
+
+    /// Toggle the cmd-k palette overlay.
+    pub fn toggle_palette(&mut self, cx: &mut Context<Self>) {
+        self.palette_open = !self.palette_open;
+        if self.palette_open {
+            self.palette = CommandPalette::new();
+        }
+        cx.notify();
+    }
+
+    /// Toggle the settings screen.
+    pub fn toggle_settings(&mut self, cx: &mut Context<Self>) {
+        self.settings_open = !self.settings_open;
+        cx.notify();
+    }
+
+    /// Attach a persisted session so turns are recorded to disk.
+    pub fn attach_live(&mut self, session: LiveSession) {
+        self.sessions.push(session.id().to_string());
+        *self.live.lock().expect("live lock poisoned") = Some(session);
     }
 
     /// Append a message to the transcript.
@@ -227,28 +275,49 @@ impl PoApp {
         cx.notify();
     }
 
-    /// Stream a model turn: nano-ai when available, an echo otherwise.
+    /// Stream a model turn through the active provider and record it.
     fn begin_stream(&mut self, _source: &str, messages: &[ChatMessage], cx: &mut Context<Self>) {
         let prompt = po_core::nanoai_prompt(messages);
         let tx = self.pieces.clone();
+        let provider = self.provider.clone();
+        let transcript: Vec<ChatMessage> = self
+            .entries
+            .iter()
+            .map(|entry| entry.message.clone())
+            .collect();
         self.entries.push(TranscriptEntry {
             message: ChatMessage::assistant(String::new()),
         });
         cx.notify();
         cx.spawn(async move |view, cx| {
-            // Local inference requires the opt-in `local-engine` feature and a
-            // Rust >= 1.101 toolchain (see README); until then po streams an
-            // echo reply so the chat flow is demonstrable everywhere.
-            let reply = format!("echo: {prompt}");
-            for word in reply.split_inclusive(char::is_whitespace) {
-                let _ = tx.send(word.to_string());
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(16))
-                    .await;
-            }
-            let _ = tx.send(String::new());
-            let _ = view.update(cx, |this, cx| {
-                this.agent = po_core::agent::AgentState::Idle;
+            // The provider streams pieces over `tx` (rendered live by the
+            // main.rs drain loop) and resolves with the full reply.
+            let reply = provider.complete(&transcript, Some(tx)).await;
+            let _ = view.update(cx, |this: &mut PoApp, cx| {
+                this.agent = AgentState::Idle;
+                match reply {
+                    Ok(text) => {
+                        if let Some(session) = this.live.lock().ok().and_then(|mut g| g.as_mut().map(|s| s.clone())) {
+                            // Record user prompt + assistant reply once the
+                            // turn completes so the log has full rows.
+                            let user_text = prompt
+                                .lines()
+                                .find_map(|l| l.strip_prefix("user: "))
+                                .unwrap_or_default()
+                                .to_string();
+                            if !user_text.is_empty() {
+                                cx.background_executor()
+                                    .spawn(async move {
+                                        let mut session = session;
+                                        let _ = session.record_user(user_text).await;
+                                        let _ = session.record_assistant(&text).await;
+                                    })
+                                    .detach();
+                            }
+                        }
+                    }
+                    Err(error) => this.notice(format!("provider error: {error}"), cx),
+                }
                 cx.notify();
             });
         })
@@ -540,6 +609,33 @@ impl Render for PoApp {
         if matches!(self.mode, AppMode::Login | AppMode::Signup) {
             return self.auth_screen(&theme, cx).into_any_element();
         }
+        if self.settings_open {
+            let settings = self.settings_view.clone().unwrap_or_else(|| {
+                let entity = cx.new(|_| SettingsScreen::new(po_core::config::Config::default()));
+                self.settings_view = Some(entity.clone());
+                entity
+            });
+            return div()
+                .id("po-settings-host")
+                .size_full()
+                .flex()
+                .flex_col()
+                .bg(theme.base_100)
+                .child(div().flex_1().child(settings))
+                .child(
+                    div()
+                        .id("po-settings-close")
+                        .cursor_pointer()
+                        .p_2()
+                        .text_color(theme.base_300)
+                        .font_family(theme.font_family.clone())
+                        .child("click to close")
+                        .on_click(cx.listener(|this, _event, _window, cx| {
+                            this.toggle_settings(cx);
+                        })),
+                )
+                .into_any_element();
+        }
         div()
             .id("po-root")
             .size_full()
@@ -549,7 +645,24 @@ impl Render for PoApp {
             .text_color(theme.content)
             .font_family(theme.font_family.clone())
             .on_action::<po_app_actions::Submit>(cx.listener(|this, _: &po_app_actions::Submit, _window, cx| {
+                if this.palette_open {
+                    // Enter in the palette picks the highlighted command.
+                    if let Some(id) = this
+                        .palette
+                        .selected_id(&this.commands)
+                        .and_then(|id| this.commands.get(&id).map(|c| c.id.clone()))
+                        .and_then(|cid| this.commands.event(&cid, "").ok())
+                    {
+                        this.palette_open = false;
+                        this.dispatch(id, cx);
+                        cx.notify();
+                        return;
+                    }
+                }
                 this.submit(cx);
+            }))
+            .on_action::<po_app_actions::CommandPalette>(cx.listener(|this, _: &po_app_actions::CommandPalette, _window, cx| {
+                this.toggle_palette(cx);
             }))
             .child(
                 div()
@@ -560,6 +673,77 @@ impl Render for PoApp {
                     .child(self.sidebar(&theme))
                     .child(self.transcript(&theme)),
             )
+            .when(self.palette_open, |root| {
+                let rows = filter(&self.commands, &self.palette.query);
+                let row_count = rows.len();
+                let overlay = div()
+                    .id("po-palette-overlay")
+                    .absolute()
+                    .bottom(px(112.))
+                    .left(px(240.))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .p_2()
+                    .rounded_lg()
+                    .bg(theme.base_200)
+                    .border_1()
+                    .border_color(theme.base_300)
+                    .font_family(theme.font_family.clone())
+                    .max_h(px(320.))
+                    .overflow_y_scroll();
+                let overlay = rows.into_iter().enumerate().fold(overlay, |overlay, (index, row)| {
+                    let highlighted = index == self.palette.selected;
+                    overlay.child(
+                        div()
+                            .id(SharedString::from(format!("palette-row-{index}")))
+                            .cursor_pointer()
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .when(highlighted, |d| d.bg(theme.primary).text_color(theme.primary_content))
+                            .when(!highlighted, |d| d.text_color(theme.content))
+                            .child(format!("{}  ·  {}", row.slash, row.description))
+                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                this.palette.selected = index;
+                                if let Some(event) = this
+                                    .palette
+                                    .selected_id(&this.commands)
+                                    .and_then(|id| this.commands.get(&id).map(|c| c.id.clone()))
+                                    .and_then(|cid| this.commands.event(&cid, "").ok())
+                                {
+                                    this.palette_open = false;
+                                    this.dispatch(event, cx);
+                                    return;
+                                }
+                                cx.notify();
+                            })),
+                    )
+                });
+                root.when(row_count == 0, |host| {
+                    host.child(
+                        div()
+                            .id("po-palette-empty")
+                            .absolute()
+                            .bottom(px(112.))
+                            .left(px(240.))
+                            .text_color(theme.base_300)
+                            .font_family(theme.font_family.clone())
+                            .child("no matching command"),
+                    )
+                })
+                .child(overlay)
+            })
+            .when_some(self.pending_approval.clone(), |root, card| {
+                root.child(
+                    div()
+                        .id("po-approval-host")
+                        .absolute()
+                        .bottom(px(112.))
+                        .left(px(240.))
+                        .child(card),
+                )
+            })
             .child(self.composer(&theme))
             .child(self.status_bar(&theme))
             .into_any_element()

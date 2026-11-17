@@ -28,7 +28,7 @@ pub enum EngineError {
 }
 
 /// A running local engine.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LocalEngine {
     handle: AsyncEngineHandle,
 }

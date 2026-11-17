@@ -1,7 +1,6 @@
 [toolchain]
-# Bleeding-edge nightly is preferred, but the newest nightly ICEs while
-# compiling the third-party `pathfinder_geometry` crate and trips an
-# async-drop cycle bug in gpui-ce. nightly-2026-09-15 builds the full graph
-# and satisfies gpui-ce (>= 1.95) and micro-engine (>= 1.101).
-channel = "nightly-2026-09-15"
+# Bleeding edge: po tracks the latest nightly (user directive). If a nightly
+# breaks a third-party crate (pathfinder_geometry ICE, gpui async-drop), fix
+# forward with a [patch] — do not pin an older toolchain.
+channel = "nightly"
 components = ["rustfmt", "clippy"]

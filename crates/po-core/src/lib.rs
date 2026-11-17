@@ -12,7 +12,9 @@ pub mod commands;
 pub mod config;
 pub mod model;
 pub mod paths;
+pub mod provider;
 pub mod session;
+pub mod session_store;
 pub mod tools;
 
 #[cfg(all(target_os = "macos", feature = "local-engine"))]

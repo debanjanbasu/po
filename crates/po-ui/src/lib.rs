@@ -5,6 +5,9 @@
 
 pub use gpui_ce_elements as elements;
 
+pub mod approval;
 pub mod font;
+pub mod palette;
+pub mod settings;
 pub mod theme;
 pub mod widgets;

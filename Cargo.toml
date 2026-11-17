@@ -53,3 +53,9 @@ strip = "symbols"
 
 [profile.release.build-override]
 opt-level = 3
+
+# Fix forward on the latest nightly: pathfinder_simd's `extern "C" llvm.*`
+# shims trip a rustc ABI-check ICE on aarch64. The vendored copy swaps them
+# for `core::arch::aarch64` intrinsics (same semantics).
+[patch.crates-io]
+pathfinder_simd = { path = "vendor/pathfinder_simd-0.5.6" }

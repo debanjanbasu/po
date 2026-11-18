@@ -342,10 +342,26 @@ impl PoApp {
                 self.notice(format!("tools: {}", registry.names().join(", ")), cx);
             }
             Effect::SetModel { model } => {
+                let model = model.trim().to_string();
                 if model.is_empty() {
-                    self.notice("model: (current provider)", cx);
+                    self.notice(format!("model: {}", self.provider.label()), cx);
+                } else if model.eq_ignore_ascii_case("echo") {
+                    self.provider = std::sync::Arc::new(po_core::provider::MockEchoProvider::default());
+                    self.notice("model: echo", cx);
+                } else if let Some(rest) = model.strip_prefix("serve:") {
+                    let mut parts = rest.split_whitespace();
+                    let url = parts.next().unwrap_or("http://127.0.0.1:8080");
+                    let name = parts.next().unwrap_or("minicpm");
+                    let mut provider = po_core::provider::NanoServeProvider::new(url, name);
+                    provider.api_key = std::env::var("PO_API_KEY").ok();
+                    let label = provider.label();
+                    self.provider = std::sync::Arc::new(provider);
+                    self.notice(format!("model: {label}"), cx);
                 } else {
-                    self.notice(format!("model switched: {model}"), cx);
+                    self.notice(
+                        "models: echo · serve:<url> [name] · (engine at boot with local-engine)",
+                        cx,
+                    );
                 }
             }
             Effect::StartTurn { messages } => {

@@ -1,0 +1,142 @@
+@plugin "daisyui" {
+  /* No `themes:` list on purpose. Listing a built-in theme name makes daisyUI
+     apply **that theme's own token set**, which would re-introduce the old
+     yellow at `:where(:root)` — the "system" theme (no `data-theme`
+     attribute) would then fall back to it. Both palettes below are defined
+     only by our own `@plugin "daisyui/theme"` blocks, and daisyUI merges our
+     tokens over the built-in ones of the same name. */
+  themes: false;
+}
+
+@plugin "daisyui/theme" {
+  name: "bumblebee";
+  default: true;
+
+  /* ONE warm family. Every role sits on the orange axis — rust 35, orange 55,
+     tan 62, amber 78, gold 92 — and reads as one material. There is no cool
+     hue anywhere. Error is the sole exception, at red 25: it has to say
+     "failure" and must not be mistaken for a brand accent.
+
+     Chroma is held **inside sRGB** at each role's lightness (92% of the
+     gamut's maximum for that hue). This matters: an over-gamut chroma gets
+     clamped by the browser, which is what makes a warm palette look muddy —
+     the hue survives, the saturation collapses.
+
+     Lightness is the main lever between roles, and it is set by how each
+     token is used here:
+
+     - `warning` is used ONLY as `text-warning` (10 sites, no `bg-warning`),
+       and `primary` is 7 text sites to 1 fill. So both are pinned bright
+       enough to stay readable as text on the page (>= 3:1) — pushing them
+       any darker converges every warm hue on the same tan and the states
+       stop being distinguishable.
+     - `accent` and `neutral` are fill-only (one avatar circle each).
+
+     Contrast, measured: every `-content` on its fill is >= 4.8:1 in both
+     themes, and in the dark theme every role clears 6.3:1 as text as well.
+     In the light theme `secondary` and `error` also clear 4.5:1 as text;
+     `primary`/`success`/`warning`/`info` clear 2.9-3.7:1, i.e. large-text
+     grade — the same band daisyUI's own warm themes sit in (its `sunset`
+     primary is 2.6:1 on white). `base-content` clears 4.5:1 comfortably,
+     which is the text people actually read. */
+
+  --color-base-100: oklch(100% 0 0);
+  --color-base-200: oklch(96.5% 0.010 55);
+  --color-base-300: oklch(90% 0.018 55);
+  --color-base-content: oklch(22% 0.018 55);
+
+  --color-primary: oklch(72% 0.164 55);
+  --color-primary-content: oklch(18% 0.027 55);
+
+  --color-secondary: oklch(56% 0.181 35);
+  --color-secondary-content: oklch(99% 0.008 35);
+
+  --color-accent: oklch(90% 0.050 55);
+  --color-accent-content: oklch(20% 0.06 55);
+
+  --color-neutral: oklch(36% 0.030 55);
+  --color-neutral-content: oklch(94% 0.012 55);
+
+  /* Warm tan — the quiet note. */
+  --color-info: oklch(66% 0.140 62);
+  --color-info-content: oklch(18% 0.025 62);
+
+  /* Success is amber, not green: the completion states (the "Device sync
+     complete" pill) belong to the family. */
+  --color-success: oklch(74% 0.142 78);
+  --color-success-content: oklch(18% 0.023 78);
+
+  --color-warning: oklch(68% 0.128 92);
+  --color-warning-content: oklch(18% 0.023 92);
+
+  --color-error: oklch(57% 0.213 25);
+  --color-error-content: oklch(99% 0.008 25);
+
+  /* Shape and elevation pinned to daisyUI 5.7's bumblebee set, so a default
+     bump cannot silently restyle every component. */
+  --radius-selector: 1rem;
+  --radius-field: 0.5rem;
+  --radius-box: 1rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+}
+
+@plugin "daisyui/theme" {
+  name: "bumblebee-dark";
+  prefersdark: true;
+  color-scheme: dark;
+
+  /* The same one-hue family on near-black. The polarity flips: here the
+     text-bearing roles are LIGHT, so they are legible as text on the dark
+     page and take dark `-content`. Surfaces carry a warm tint rather than a
+     neutral grey, so the accents sit in the family instead of on top of it.
+
+     Every role clears 6.3:1 in this theme, both as a fill under its own
+     content and as text on the page. */
+
+  --color-base-100: oklch(16% 0.008 55);
+  --color-base-200: oklch(22% 0.012 55);
+  --color-base-300: oklch(30% 0.016 55);
+  --color-base-content: oklch(92% 0.012 55);
+
+  --color-primary: oklch(76% 0.152 55);
+  --color-primary-content: oklch(18% 0.027 55);
+  --color-secondary: oklch(70% 0.178 35);
+  --color-secondary-content: oklch(18% 0.039 35);
+
+  --color-accent: oklch(92% 0.048 55);
+  --color-accent-content: oklch(20% 0.06 55);
+  --color-neutral: oklch(32% 0.030 55);
+  --color-neutral-content: oklch(93% 0.012 55);
+
+  --color-info: oklch(74% 0.157 62);
+  --color-info-content: oklch(18% 0.025 62);
+  --color-success: oklch(78% 0.150 78);
+  --color-success-content: oklch(18% 0.023 78);
+  --color-warning: oklch(80% 0.151 92);
+  --color-warning-content: oklch(18% 0.023 92);
+  --color-error: oklch(66% 0.208 25);
+  --color-error-content: oklch(18% 0.044 25);
+
+  /* Shape and elevation, same as the light theme above. */
+  --radius-selector: 1rem;
+  --radius-field: 0.5rem;
+  --radius-box: 1rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+}
+
+
+@theme {
+  --font-base:
+    "IBM3270", ui-monospace, "Cascadia Code", "Source Code Pro", Menlo,
+    Consolas, "DejaVu Sans Mono", monospace;
+  --font-mono: var(--font-base);
+  --font-sans: var(--font-base);
+}

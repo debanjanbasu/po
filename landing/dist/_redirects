@@ -1,0 +1,7 @@
+# Normalize trailing slashes
+/privacy  /privacy/  301
+/terms    /terms/    301
+
+# Universal/app-link landing rewrites
+/c/*      /          200
+/p/*      /          200

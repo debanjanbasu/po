@@ -3,7 +3,6 @@ name = "po-ui"
 description = "GPUI presentation layer for po: orange bumblebee theme, IBM 3270 typography, chat widgets."
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 

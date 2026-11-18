@@ -75,7 +75,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            provider: Provider::LocalMicroAi {
+            provider: Provider::LocalNano {
                 model_path: default_model_path(),
             },
             theme: ThemeMode::Dark,
@@ -146,11 +146,6 @@ impl Config {
         self.data_dir.join("sessions")
     }
 
-    /// Resolve the API key for remote providers from the environment.
-    #[must_use]
-    pub fn api_key_from_env(&self) -> Option<String> {
-        std::env::var("PO_API_KEY").ok().filter(|k| !k.is_empty())
-    }
 }
 
 #[cfg(test)]

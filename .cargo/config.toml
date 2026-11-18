@@ -32,7 +32,7 @@ panic-immediate-abort = true
 # Fingerprint by content checksum instead of mtime — kills spurious
 # rebuilds after branch switches and checkout churn.
 checksum-freshness = true
-# gitoxide fetches + shallow clones for git deps (micro-ai is a large repo).
+# gitoxide fetches + shallow clones for git deps (nano-ai is a large repo).
 gitoxide = "fetch"
 git = "shallow-deps"
 # Store crate metadata only in .rmeta files — smaller target/ dir.

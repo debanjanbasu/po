@@ -52,13 +52,22 @@ pub struct AuthStore {
     accounts: HashMap<String, StoredAccount>,
 }
 
+/// Lowercase hex encoding of a digest.
+fn to_hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
 /// Hash a password with a salt.
 fn salted_hash(salt: &str, password: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(salt.as_bytes());
     hasher.update(b":");
     hasher.update(password.as_bytes());
-    format!("{:x}", hasher.finalize())
+    to_hex(&hasher.finalize())
 }
 
 /// Generate a random-looking salt from the OS entropy source.
@@ -73,7 +82,7 @@ fn fresh_salt() -> String {
     hasher.update(std::process::id().to_le_bytes());
     let addr = &now as *const _ as usize;
     hasher.update(addr.to_le_bytes());
-    format!("{:x}", hasher.finalize())
+    to_hex(&hasher.finalize())
 }
 
 impl AuthStore {

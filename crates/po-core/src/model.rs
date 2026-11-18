@@ -9,20 +9,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Provider {
-    /// The bundled micro-ai engine running a local model (Apple Silicon only).
-    LocalMicroAi {
+    /// The bundled nano-ai engine running a local model (Apple Silicon only).
+    LocalNano {
         /// Filesystem path to the model weights.
         model_path: String,
-    },
-    /// Any OpenAI-compatible HTTP endpoint (`micro-ai serve` also speaks this).
-    RemoteOpenAiCompatible {
-        /// Base URL, e.g. `http://127.0.0.1:8080`.
-        base_url: String,
-        /// Optional bearer token; never persisted into session logs.
-        #[serde(skip_serializing)]
-        api_key: Option<String>,
-        /// Model identifier passed through to the endpoint.
-        model: String,
     },
 }
 
@@ -31,14 +21,13 @@ impl Provider {
     #[must_use]
     pub fn label(&self) -> String {
         match self {
-            Self::LocalMicroAi { model_path } => {
+            Self::LocalNano { model_path } => {
                 let name = std::path::Path::new(model_path)
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("local");
-                format!("micro-ai: {name}")
+                format!("nano-ai: {name}")
             }
-            Self::RemoteOpenAiCompatible { model, .. } => format!("openai-compatible: {model}"),
         }
     }
 
@@ -173,27 +162,9 @@ mod tests {
 
     #[test]
     fn provider_label_is_human_readable() {
-        let local = Provider::LocalMicroAi {
+        let local = Provider::LocalNano {
             model_path: "/models/minicpm-v-4.7-1b/minicpm-v-4.7-1b-tern4.bin".into(),
         };
-        assert!(local.label().contains("micro-ai"));
-
-        let remote = Provider::RemoteOpenAiCompatible {
-            base_url: "http://127.0.0.1:8080".into(),
-            api_key: None,
-            model: "minicpm".into(),
-        };
-        assert!(remote.label().contains("minicpm"));
-    }
-
-    #[test]
-    fn api_key_is_never_serialized() {
-        let provider = Provider::RemoteOpenAiCompatible {
-            base_url: "http://127.0.0.1:8080".into(),
-            api_key: Some("secret".into()),
-            model: "m".into(),
-        };
-        let json = serde_json::to_string(&provider).expect("serialize");
-        assert!(!json.contains("secret"), "api key leaked: {json}");
+        assert!(local.label().contains("nano-ai"));
     }
 }

@@ -706,6 +706,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bstr"
+version = "1.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bb31b46c14244e20ee9984b11bf5c992b91fb6939fea616e3512c8baecdbe5f"
+dependencies = [
+ "memchr",
+ "serde_core",
+]
+
+[[package]]
 name = "built"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4383,7 +4393,7 @@ dependencies = [
 [[package]]
 name = "pathfinder_simd"
 version = "0.5.6"
-source = "git+https://github.com/servo/pathfinder?rev=cf7c9987729ebeaa3f9fa5f84dd3c9d824befb24#cf7c9987729ebeaa3f9fa5f84dd3c9d824befb24"
+source = "git+https://github.com/servo/pathfinder?branch=main#cf7c9987729ebeaa3f9fa5f84dd3c9d824befb24"
 dependencies = [
  "rustc_version",
 ]
@@ -4531,7 +4541,7 @@ dependencies = [
  "nano-engine",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.1",
  "similar",
  "tempfile",
  "thiserror 2.0.21",
@@ -5317,9 +5327,12 @@ checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 
 [[package]]
 name = "similar"
-version = "2.7.0"
+version = "3.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
+checksum = "d2f8bec09ae8fae0f4f265a4559a9334be3929d8504e9b536df0a41302bd1733"
+dependencies = [
+ "bstr",
+]
 
 [[package]]
 name = "simplecss"

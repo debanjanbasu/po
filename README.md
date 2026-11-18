@@ -48,12 +48,6 @@ ln -s ../nano-ai/models/minicpm-v-4.7-1b/minicpm-v-4.7-1b-tern4.bin \
 cargo run -p po-app --features po-app/local-engine
 ```
 
-Or against any OpenAI-compatible endpoint (`nano-ai serve`):
-
-```sh
-# select at boot via config; see crates/po-core/src/provider.rs
-```
-
 ## Keyboard
 
 | Key | Action |

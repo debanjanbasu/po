@@ -1,6 +1,6 @@
 //! Adapter for the local nano-ai engine.
 //!
-//! `micro-engine` is consumed straight from the nano-ai repository, pinned
+//! `nano-engine` is consumed straight from the nano-ai repository, pinned
 //! to a commit. Because we own nano-ai, this adapter is deliberately thin:
 //! it owns the prompt format, the streaming bridge, and the translation from
 //! engine pieces into po's [`StreamEvent`]s.
@@ -125,7 +125,7 @@ pub fn piece_to_event(piece: String) -> StreamEvent {
 /// Build the provider description for a local model path.
 #[must_use]
 pub fn local_provider(model_path: impl Into<String>) -> Provider {
-    Provider::LocalMicroAi {
+    Provider::LocalNano {
         model_path: model_path.into(),
     }
 }

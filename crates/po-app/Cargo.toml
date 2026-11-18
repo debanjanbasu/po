@@ -1,9 +1,8 @@
 [package]
 name = "po-app"
-description = "po — a native, chat-driven AI desktop harness built on gpui-ce and micro-ai."
+description = "po — a native, chat-driven AI desktop harness built on gpui-ce and nano-ai."
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 

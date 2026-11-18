@@ -6,6 +6,9 @@ members = [
     "crates/po-app",
 ]
 
+[workspace.lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(pf_rustc_nightly)'] }
+
 [workspace.package]
 version = "0.1.0"
 edition = "2024"

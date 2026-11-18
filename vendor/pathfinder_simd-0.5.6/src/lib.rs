@@ -9,6 +9,10 @@
 // except according to those terms.
 
 #![allow(internal_features)]
+// NOTE(po): upstream code triggers `unused_unsafe` after our intrinsic swap
+// and the `pf_rustc_nightly` cfg name is not declared anywhere; silence both
+// so po's builds stay warning-clean.
+#![allow(unused_unsafe, unexpected_cfgs)]
 #![cfg_attr(pf_rustc_nightly, feature(repr_simd, core_intrinsics))]
 
 //! A minimal SIMD abstraction, usable outside of Pathfinder.

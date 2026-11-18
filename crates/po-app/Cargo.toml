@@ -26,3 +26,6 @@ tracing.workspace = true
 default = []
 # Mirrors po-core's local-engine so cfg blocks in po-app activate on macOS.
 local-engine = ["po-core/local-engine"]
+
+[lints]
+workspace = true

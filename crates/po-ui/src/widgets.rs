@@ -146,7 +146,7 @@ impl PoApp {
     /// Attach a persisted session so turns are recorded to disk.
     pub fn attach_live(&mut self, session: LiveSession) {
         self.sessions.push(session.id().to_string());
-        *self.live.lock().expect("live lock poisoned") = Some(session);
+        *self.live.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(session);
     }
 
     /// Append a message to the transcript.
@@ -228,7 +228,7 @@ impl PoApp {
             _ => {}
         }
         for effect in next.effects {
-            self.apply(event_label(&event), effect, cx);
+            self.apply(effect, cx);
         }
         cx.notify();
     }
@@ -244,7 +244,7 @@ impl PoApp {
         self.dispatch(event, cx);
     }
 
-    fn apply(&mut self, source: &str, effect: po_core::agent::Effect, cx: &mut Context<Self>) {
+    fn apply(&mut self, effect: po_core::agent::Effect, cx: &mut Context<Self>) {
         use po_core::agent::Effect;
         match effect {
             Effect::SetTheme { mode } => {
@@ -316,7 +316,7 @@ impl PoApp {
                 cx.spawn(async move |view, cx| {
                     let forked = async move {
                         let store = po_core::session::SessionStore::default_location()?;
-                        let snapshot = live.lock().ok().and_then(|g| g.as_ref().map(|s| s.clone()));
+                        let snapshot = live.lock().ok().and_then(|g| g.as_ref().cloned());
                         match snapshot {
                             Some(session) => session.fork(&store, usize::MAX).await,
                             None => Err(po_core::session_store::LiveSessionError::Log(
@@ -365,7 +365,7 @@ impl PoApp {
                 }
             }
             Effect::StartTurn { messages } => {
-                self.begin_stream(source, &messages, cx);
+                self.begin_stream(&messages, cx);
             }
             Effect::AbortProvider => {
                 self.notice("aborted", cx);
@@ -413,7 +413,7 @@ impl PoApp {
     }
 
     /// Stream a model turn through the active provider and record it.
-    fn begin_stream(&mut self, _source: &str, messages: &[ChatMessage], cx: &mut Context<Self>) {
+    fn begin_stream(&mut self, messages: &[ChatMessage], cx: &mut Context<Self>) {
         let prompt = po_core::nanoai_prompt(messages);
         let tx = self.pieces.clone();
         let provider = self.provider.clone();
@@ -754,13 +754,6 @@ impl PoApp {
                 ThemeMode::Dark => "theme: dark (noir)",
                 ThemeMode::Light => "theme: light",
             })
-    }
-}
-
-fn event_label(event: &AgentEvent) -> &'static str {
-    match event {
-        AgentEvent::UserMessage { .. } => "user",
-        _ => "command",
     }
 }
 

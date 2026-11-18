@@ -18,3 +18,7 @@ This product includes software developed as part of the following projects:
 * IBM 3270 font — https://github.com/rbanffy/3270font
   The bundled 3270 typeface is redistributed under the terms of its own license, which is
   reproduced in assets/fonts/LICENSE-3270.txt.
+
+* pathfinder — https://github.com/servo/pathfinder — MIT OR Apache-2.0
+  Used indirectly through gpui-ce's text pipeline (`pathfinder_simd`), patched
+  to upstream main for nightly-compiler compatibility.

@@ -12,7 +12,7 @@ unexpected_cfgs = { level = "allow", check-cfg = ['cfg(pf_rustc_nightly)'] }
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.95"
+rust-version = "1.101"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/debanjanbasu/po"
 
@@ -57,8 +57,8 @@ strip = "symbols"
 [profile.release.build-override]
 opt-level = 3
 
-# Fix forward on the latest nightly: pathfinder_simd's `extern "C" llvm.*`
-# shims trip a rustc ABI-check ICE on aarch64. The vendored copy swaps them
-# for `core::arch::aarch64` intrinsics (same semantics).
+# Upstream pathfinder main replaced its `extern "C" llvm.*` shims with
+# `core::arch::aarch64` intrinsics, which builds clean on the latest nightly;
+# the crates.io release (0.5.6) predates that fix, so patch to upstream main.
 [patch.crates-io]
-pathfinder_simd = { path = "vendor/pathfinder_simd-0.5.6" }
+pathfinder_simd = { git = "https://github.com/servo/pathfinder", rev = "cf7c9987729ebeaa3f9fa5f84dd3c9d824befb24" }

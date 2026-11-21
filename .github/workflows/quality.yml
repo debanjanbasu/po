@@ -1,0 +1,252 @@
+name: Quality checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: '2'
+  NPM_CONFIG_ENGINE_STRICT: 'true'
+
+jobs:
+  secrets:
+    name: Repository secret hygiene
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Ensure the local .env file is not tracked by git
+        run: |
+          if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+            echo "ERROR: .env holds the local OO_APP_PEPPER secret and must not be tracked by git." >&2
+            git ls-files --error-unmatch .env >&2
+            exit 1
+          fi
+
+  format:
+    name: Rust formatting
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the repository Rust toolchain
+        run: bash scripts/ci-setup-rust.sh
+
+      - name: Check Rust formatting without rewriting files
+        run: cargo fmt --all -- --check
+
+      - name: Ensure formatting did not rewrite tracked inputs
+        run: git diff --exit-code
+
+  desktop:
+    name: Desktop lint (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Pinned, not `ubuntu-latest`: that label still resolves to 24.04,
+          # a release behind what the arm64 row and every other job run.
+          - runner: ubuntu-26.04
+            arch: x86_64
+          - runner: ubuntu-26.04-arm
+            arch: ARM64
+    env:
+      # Match zstd-sys fat-LTO C objects to LLVM's lld linker (GNU ld.bfd on
+      # aarch64 Ubuntu cannot read clang's LLVM IR bitcode objects).
+      CC: clang
+      AR: llvm-ar
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: clang
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+          path: assets
+
+      - name: Install the repository Rust toolchain
+        run: bash scripts/ci-setup-rust.sh
+
+      - name: Install desktop C build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm libclang-dev pkg-config capnproto libdbus-1-dev \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev \
+            libayatana-appindicator3-dev librsvg2-dev libssl-dev
+          capnp --version
+
+      - name: Lint desktop
+        run: cargo clippy --config 'target."cfg(target_os = \"linux\")".rustflags=["-Clink-arg=-fuse-ld=lld"]' --config 'host.rustflags=["-Clink-arg=-fuse-ld=lld"]' --features desktop -- -D warnings
+
+      - name: Ensure checks did not rewrite tracked inputs
+        run: git diff --exit-code
+
+  web:
+    name: Web lint (ARM64 host)
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 90
+    env:
+      CC: clang
+      AR: llvm-ar
+      CC_wasm32_unknown_unknown: clang
+      AR_wasm32_unknown_unknown: llvm-ar
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: clang
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+          path: assets
+
+      - name: Install the repository Rust toolchain
+        run: bash scripts/ci-setup-rust.sh --target wasm32-unknown-unknown
+
+      - name: Install Web C build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm capnproto
+          capnp --version
+
+      - name: Lint Web
+        run: cargo clippy --config 'host.rustflags=["-Clink-arg=-fuse-ld=lld"]' --target wasm32-unknown-unknown --features web -- -D warnings
+
+      - name: Ensure checks did not rewrite tracked inputs
+        run: git diff --exit-code
+
+  swift:
+    name: Native Swift / SDK 27 / ${{ matrix.platform }}
+    # The app's deployment target is 27.0, so this needs the SDK 27 toolchain;
+    # `xcode-27` is the macOS 27 image that carries Xcode 27.
+    runs-on: xcode-27
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macOS
+            triple: arm64-apple-macosx27.0
+            sdk: macosx
+            scratch: swift-macos
+          - platform: iOS
+            triple: arm64-apple-ios27.0
+            sdk: iphoneos
+            scratch: swift-ios
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Record and require the Apple compiler/SDK generation
+        run: |
+          {
+            xcodebuild -version
+            xcrun swift --version
+            xcrun --sdk macosx --show-sdk-version
+            xcrun --sdk iphoneos --show-sdk-version
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          [[ "$(xcrun --sdk macosx --show-sdk-version)" == 27.* ]]
+          [[ "$(xcrun --sdk iphoneos --show-sdk-version)" == 27.* ]]
+          xcrun swift --version | grep -E '^Apple Swift version 6\.4([ .]|$)'
+
+      - name: Compile the Swift package
+        # `-c release` on purpose: this is the only Swift gate that is not
+        # aspirational, and release-only breakage (`-O` whole-module
+        # optimization, strict memory safety, `@objc` visibility under
+        # optimization) otherwise first shows up in a release build.
+        run: |
+          xcrun swift build -c release --package-path native/apple \
+            --scratch-path "target/ci/${{ matrix.scratch }}" \
+            --triple '${{ matrix.triple }}' \
+            --sdk "$(xcrun --sdk '${{ matrix.sdk }}' --show-sdk-path)" \
+            -Xswiftc -warnings-as-errors
+
+      - name: Ensure checks did not rewrite tracked inputs
+        run: git diff --exit-code
+
+  typescript:
+    name: TypeScript lint (strict, type-aware)
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 'latest'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Lint every JS/TS file (oxlint + tsgolint, type-aware)
+        # Type information comes from `oxlint-tsgolint`, which builds a
+        # TypeScript program with `typescript-go` — that is why this job needs
+        # no build step for the harness, and why `typescript` is a dependency
+        # (both ship linux-arm64 binaries).
+        run: |
+          npm ci --no-audit --no-fund
+          npx oxlint --version
+          npm run lint
+
+      - name: Type-check the harness (tsc --noEmit)
+        # Type-aware linting is not type checking: oxlint's type-aware rules
+        # only flag what those rules look for, and `oxlint-tsgolint` (which
+        # builds a `typescript-go` program) does not replace `tsc`. So run the
+        # real compiler, without emitting, over the harness' `tsconfig.json`.
+        run: npm run typecheck
+
+  landing:
+    name: Landing build
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 'latest'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Build the locked landing project
+        run: |
+          node --version
+          npm --version
+          npm ci --no-audit --no-fund
+          npm run landing:build
+
+      - name: Ensure the build did not rewrite tracked inputs
+        run: git diff --exit-code

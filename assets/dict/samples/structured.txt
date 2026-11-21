@@ -1,0 +1,259 @@
+# Structured data training samples for zstd dictionary
+# Format: key-value pairs separated by null bytes, one record per line
+# Lines starting with # are comments
+# All application data shares a single "Structured" compression domain
+
+# ── User profiles (SyncProfile CRDT) ───────────────────────────────────────
+username\0alice\0dob\019900101\0terms_accepted\0true
+username\0bob\0dob\019850515\0terms_accepted\0true
+username\0charlie\0dob\019920315\0terms_accepted\0false
+username\0diana\0dob\019880820\0terms_accepted\0true
+username\0eve\0dob\019950712\0terms_accepted\0true
+username\0frank\0dob\019870203\0terms_accepted\0true
+
+# ── Security settings (SyncSecurity CRDT) ──────────────────────────────────
+pin_hash\0argon2id$v=19$m=65536,t=3,p=4$\0biometrics_enabled\0false
+pin_hash\0argon2id$v=19$m=65536,t=3,p=4$\0biometrics_enabled\0true
+security_level\0standard\0two_factor\0enabled
+security_level\0high\0two_factor\0required
+
+# ── App state / navigation (SyncAppState CRDT) ────────────────────────────
+nav_order\0TOTP\0Chat\0Account
+nav_order\0Chat\0TOTP\0Account
+last_route\0/chat
+last_route\0/totp
+last_route\0/settings
+theme\0system
+theme\0light
+theme\0dark
+
+# ── DHT pointers / child records (SyncPointers CRDT) ──────────────────────
+totp\0key\0VLD0:KpJF7tmUGbIhQxF7tWDGp4aJPYGE7j4ynKSGBkS_abc\0subkey_count\01
+contacts\0key\0VLD0:m9Rq2vXbNcOeF1hT5wKlZx3jY8uAsDfGhJkL0123\0subkey_count\01
+conversations\0key\0VLD0:pQ7nR4sW1xZ6cV9bN2mA5oL8eI3uY0tDhFjGk456\0subkey_count\04
+documents\0key\0VLD0:wE6rT3yU8iP1aS4dF7gH0jK2lZ5xC9vB3nMq789\0subkey_count\02
+dict_version\064
+
+# ── TOTP tokens ────────────────────────────────────────────────────────────
+issuer\0Google\0account_name\0alice@example.com\0secret\0JBSWY3DPEHPK3PXP\0algorithm\0SHA1\0digits\06\0period\030
+issuer\0GitHub\0account_name\0bob@github.com\0secret\0GEZDGNBVGY3TQOJQ\0algorithm\0SHA256\0digits\06\0period\030
+issuer\0Amazon\0account_name\0alice@amazon.com\0secret\0HXDMVJRCJJYRBNDJ\0algorithm\0SHA1\0digits\06\0period\030
+issuer\0Microsoft\0account_name\0bob@outlook.com\0secret\0KVKFKRCPNZQUYMBX\0algorithm\0SHA256\0digits\08\0period\030
+
+# ── Contacts (ChatContact / ContactList CRDT) ──────────────────────────────
+contacts\0id\0alice:VLD0:KpJF7tmUGbIhQxF7tWDGp4aJ\0username\0alice\0display_name\0Alice\0status\0Active
+contacts\0id\0bob:VLD0:m9Rq2vXbNcOeF1hT5wKlZx3j\0username\0bob\0display_name\0Bob\0status\0Active
+contacts\0id\0charlie:VLD0:pQ7nR4sW1xZ6cV9bN2mA5oL8\0username\0charlie\0display_name\0Charlie\0status\0Pending
+contacts\0id\0oo:system\0username\0oo\0display_name\0oo (AI)\0status\0Active
+
+# ── Conversation index (ConversationEntry / ConversationIndex CRDT) ────────
+conversation_record_key\0VLD0:abc123def456ghi789jkl012mno345pqr678\0contact_username\0bob\0title\0bob\0last_message_preview\0Hey! How's it going?\0last_message_at\01710000000000\0unread_count\02
+conversation_record_key\0VLD0:stu901vwx234yza567bcd890efg123hij456\0contact_username\0alice\0title\0alice\0last_message_preview\0See you tomorrow!\0last_message_at\01710000001000\0unread_count\00
+conversation_record_key\0VLD0:mno345pqr678abc123def456ghi789jkl012\0contact_username\0charlie\0title\0Project Team\0last_message_preview\0The build is passing now\0last_message_at\01710000050000\0unread_count\05
+
+# ── Conversation manifest (ConversationManifest CRDT) ──────────────────────
+title\0bob\0owner_identity_key\0VLD0:KpJF7tmUGbIhQxF7tWDGp4aJPYGE7j4y\0created_at\01710000000000
+title\0alice\0owner_identity_key\0VLD0:m9Rq2vXbNcOeF1hT5wKlZx3jY8uAsDfG\0created_at\01710000001000
+title\0Project Team\0owner_identity_key\0VLD0:KpJF7tmUGbIhQxF7tWDGp4aJPYGE7j4y\0created_at\01710000000000
+title\0Family\0owner_identity_key\0VLD0:pQ7nR4sW1xZ6cV9bN2mA5oL8eI3uY0tD\0created_at\01710000005000
+
+# ── Conversation roster (ConversationRoster / MemberEntry CRDT) ────────────
+username\0alice\0identity_key\0VLD0:KpJF7tmUGbIhQxF7tWDGp4aJPYGE7j4y\0role\0Owner\0status\0Active
+username\0bob\0identity_key\0VLD0:m9Rq2vXbNcOeF1hT5wKlZx3jY8uAsDfG\0role\0Member\0status\0Active
+username\0charlie\0identity_key\0VLD0:pQ7nR4sW1xZ6cV9bN2mA5oL8eI3uY0tD\0role\0Member\0status\0Invited
+username\0diana\0identity_key\0VLD0:wE6rT3yU8iP1aS4dF7gH0jK2lZ5xC9vB\0role\0Member\0status\0Active
+last_updated\01710000000200
+
+# ── Conversation key ring (ConversationKeyRing / KeyRingEntry CRDT) ────────
+identity_key\0VLD0:KpJF7tmUGbIhQxF7tWDGp4aJPYGE7j4y\0wrapped_key\0<32 bytes AEAD>
+identity_key\0VLD0:m9Rq2vXbNcOeF1hT5wKlZx3jY8uAsDfG\0wrapped_key\0<32 bytes AEAD>
+identity_key\0VLD0:pQ7nR4sW1xZ6cV9bN2mA5oL8eI3uY0tD\0wrapped_key\0<32 bytes AEAD>
+
+# ── Feed messages (FeedMessage CRDT) ───────────────────────────────────────
+seq\00\0sender_username\0alice\0content\0Hey! 👋\0timestamp\01710000000000
+seq\01\0sender_username\0bob\0content\0Hi there! How's it going?\0timestamp\01710000001000
+seq\02\0sender_username\0alice\0content\0Pretty good! Just finished lunch 🍕\0timestamp\01710000002000
+seq\03\0sender_username\0bob\0content\0Nice! What did you have?\0timestamp\01710000003000
+seq\04\0sender_username\0alice\0content\0Homemade pizza, turned out great!\0timestamp\01710000004000
+seq\05\0sender_username\0bob\0content\0That sounds amazing 🤤\0timestamp\01710000005000
+seq\06\0sender_username\0system\0content\0User joined the conversation\0timestamp\01710000000000
+seq\07\0sender_username\0alice\0content\0Did you see the meeting invite?\0timestamp\01711234567890
+seq\08\0sender_username\0bob\0content\0Yeah, 3pm right?\0timestamp\01711234568000
+seq\09\0sender_username\0alice\0content\0Yep! Conference room B\0timestamp\01711234569000
+seq\010\0sender_username\0bob\0content\0Got it, thanks! 📝\0timestamp\01711234570000
+seq\011\0sender_username\0alice\0content\0Also, did you review my PR?\0timestamp\01711234571000
+seq\012\0sender_username\0bob\0content\0Not yet, I'll check it after the meeting\0timestamp\01711234572000
+seq\013\0sender_username\0alice\0content\0No rush, whenever you get a chance\0timestamp\01711234573000
+seq\014\0sender_username\0bob\0content\0Will do! 👍\0timestamp\01711234574000
+
+# ── Participant feed meta (ParticipantFeedMeta CRDT) ───────────────────────
+last_seq\014\0last_message_at\01711234574000
+last_seq\06\0last_message_at\01710000005000
+last_seq\00\0last_message_at\00
+
+# ── Message page (MessagePage CRDT) ───────────────────────────────────────
+prev_page_key\0VLD0:abc123def456ghi789jkl012mno345pqr678\0page_seq_start\00\0page_seq_end\014
+prev_page_key\0\0page_seq_start\00\0page_seq_end\09
+
+# ── Chat message content patterns ─────────────────────────────────────────
+# Realistic chat messages for dictionary training (migrated from chat.txt)
+sender\0alice\0content\0Hey! 👋\0type\0text
+sender\0bob\0content\0Hi there! How's it going?\0type\0text
+sender\0alice\0content\0Pretty good! Just finished lunch 🍕\0type\0text
+sender\0bob\0content\0Nice! What did you have?\0type\0text
+sender\0alice\0content\0Homemade pizza, turned out great!\0type\0text
+sender\0bob\0content\0That sounds amazing 🤤\0type\0text
+sender\0alice\0content\0You should come over sometime!\0type\0text
+sender\0bob\0content\0I'd love that! When?\0type\0text
+sender\0alice\0content\0How about this weekend?\0type\0text
+sender\0bob\0content\0Works for me! Saturday afternoon?\0type\0text
+sender\0alice\0content\0Perfect! I'll send you the address 📍\0type\0text
+sender\0bob\0content\0Great, looking forward to it! 🎉\0type\0text
+sender\0alice\0content\0Did you see the meeting invite?\0type\0text
+sender\0bob\0content\0Yeah, 3pm right?\0type\0text
+sender\0alice\0content\0Yep! Conference room B\0type\0text
+sender\0bob\0content\0Got it, thanks! 📝\0type\0text
+sender\0alice\0content\0Also, did you review my PR?\0type\0text
+sender\0bob\0content\0Not yet, I'll check it after the meeting\0type\0text
+sender\0alice\0content\0No rush, whenever you get a chance\0type\0text
+sender\0bob\0content\0Will do! 👍\0type\0text
+sender\0alice\0content\0You still at the office?\0type\0text
+sender\0bob\0content\0Yeah, leaving in 10\0type\0text
+sender\0alice\0content\0Cool, see you tomorrow!\0type\0text
+sender\0bob\0content\0See ya! 👋\0type\0text
+sender\0alice\0content\0The build is failing again 😅\0type\0text
+sender\0bob\0content\0What's the error?\0type\0text
+sender\0alice\0content\0Something about missing dependencies\0type\0text
+sender\0bob\0content\0Did you run npm install?\0type\0text
+sender\0alice\0content\0Thanks for the help! 🙏\0type\0text
+sender\0bob\0content\0Anytime! That's what teammates are for\0type\0text
+sender\0alice\0content\0brb\0type\0text
+sender\0bob\0content\0k!\0type\0text
+sender\0alice\0content\0back\0type\0text
+sender\0bob\0content\0wb 👋\0type\0text
+sender\0oo\0content\0How can I help?\0type\0text
+sender\0oo\0content\0I'll have it ready in a few minutes.\0type\0text
+sender\0oo\0content\0Working on it! 🚀\0type\0text
+sender\0oo\0content\0Done! Here's what I found:\0type\0text
+sender\0system\0content\0User joined the conversation\0type\0system
+sender\0system\0content\0User left the conversation\0type\0system
+
+# ── Common emoji sequences ─────────────────────────────────────────────────
+👋🎉👍😊🙏😂🤣😅😔🤤📝📍📊📅🚀💪🎯✅🔍🔔🔒🔧📈🛡️
+☕🍕🍿🌧️☀️✈️🎫🤓🎬🥾🏃🦷🧠🐛✨🏆🌅📬🕐📨🎨📋🗣️🤖🌟📄📑
+
+# ── DHT key patterns (VLD0 format — Veilid record keys) ───────────────────
+VLD0:KpJF7tmUGbIhQxF7tWDGp4aJPYGE7j4ynKSGBkS_abc
+VLD0:m9Rq2vXbNcOeF1hT5wKlZx3jY8uAsDfGhJkL0123def
+VLD0:pQ7nR4sW1xZ6cV9bN2mA5oL8eI3uY0tDhFjGk456ghi
+VLD0:wE6rT3yU8iP1aS4dF7gH0jK2lZ5xC9vB3nMq789jkl
+VLD0:aB1cD2eF3gH4iJ5kL6mN7oP8qR9sT0uV1wX2yZ3456
+VLD0:zY9xW8vU7tS6rQ5pO4nM3lK2jI1hG0fE9dC8bA7xyz
+
+# ── Compression header patterns ([version:u32 LE][payload]) ────────────────
+# Version 1 header: 01 00 00 00 + compressed payload
+# Version 2 header: 02 00 00 00 + compressed payload
+# These appear at the start of every compressed blob in DHT and TableDB
+
+# ── Automerge CRDT field patterns ──────────────────────────────────────────
+# Automerge serializes field names as strings in its binary format.
+# High-frequency field names that appear in CRDT documents:
+username
+identity_key
+dob
+terms_accepted
+pin_hash
+biometrics_enabled
+nav_order
+theme
+dict_version
+title
+owner_identity_key
+created_at
+last_updated
+role
+status
+wrapped_key
+seq
+sender_username
+content
+timestamp
+last_seq
+last_message_at
+prev_page_key
+page_seq_start
+page_seq_end
+conversation_record_key
+contact_username
+last_message_preview
+last_message_at
+unread_count
+display_name
+pointers
+subkey_count
+key
+
+# ── Sync state ─────────────────────────────────────────────────────────────
+sync_status\0pending\0count\03\0last_sync\01710000000000
+sync_status\0in_progress\0count\01\0last_sync\01710000001000
+sync_status\0complete\0count\00\0last_sync\01710000002000
+
+# ── Operation types (PendingOperation OpType) ──────────────────────────────
+ProfileSync
+SecuritySync
+AppStateSync
+PointerSync
+TotpSync
+ContactSync
+ConvIndexSync
+ConvFeedSync
+ConvManifestSync
+ConvRosterSync
+ConvKeyRingSync
+DictPublish
+
+# ── Common patterns and values ─────────────────────────────────────────────
+\0true\0false\00\01
+Owner\0Member
+Pending\0Active\0Invited
+Sent\0Pending\0Failed
+
+# ── Timestamp patterns (multiple realistic ranges) ────────────────────────
+# March 2024
+created_at\01710000000000
+updated_at\01710000010000
+last_active\01710000000001
+# April 2024
+created_at\01712000000000
+updated_at\01712100000000
+last_message_at\01712345678000
+# January 2025
+created_at\01735689600000
+updated_at\01735700000000
+# March 2025
+created_at\01740000000000
+last_message_at\01740123456789
+
+# ── Encryption metadata ───────────────────────────────────────────────────
+nonce\0abcdefghijklmnop
+algorithm\0AES-256-GCM
+key_derivation\0Argon2id
+
+# ── Device information ────────────────────────────────────────────────────
+device_id\0device-abc123
+device_name\0iPhone 15 Pro
+platform\0ios
+platform\0android
+platform\0web
+platform\0desktop
+version\01.0.0
+
+# ── Network state ─────────────────────────────────────────────────────────
+network\0connected\0peers\015\0latency\042
+network\0disconnected\0peers\00\0latency\00
+attachment\0attached\0routing\0direct
+attachment\0detached\0routing\0none
+
+# ── Compact identity format (oo:username#dht_key) ─────────────────────────
+oo:alice#VLD0:KpJF7tmUGbIhQxF7tWDGp4aJPYGE7j4y
+oo:bob#VLD0:m9Rq2vXbNcOeF1hT5wKlZx3jY8uAsDfG

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Full Info.plist for the macOS bundle. dx writes this file verbatim
+     ([application] macos_info_plist), so every required key must be here.
+     Keep CFBundleShortVersionString/CFBundleVersion in sync with Cargo.toml. -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en_US</string>
+	<key>CFBundleDisplayName</key>
+	<string>oo</string>
+	<key>CFBundleExecutable</key>
+	<string>oo</string>
+	<key>CFBundleIconFile</key>
+	<string>icon.icns</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.debanjanbasu.oo</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>oo</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.debanjanbasu.oo.pair</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>oo</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>0.1.0</string>
+	<key>LSMinimumSystemVersion</key>
+    <string>27.0</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_veilid._udp</string>
+		<string>_veilid._tcp</string>
+	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Scan QR codes for device pairing</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Authenticate with Face ID or fingerprint</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Connect to peers on the local network</string>
+	<!-- Never restore windows from a previous session. On an unclean exit
+	     macOS shows a modal "The last time you opened oo, it unexpectedly
+	     quit while reopening windows. Do you want to try to reopen its
+	     windows again?" prompt that blocks the app from ever reaching its
+	     first frame. That prompt is unrecoverable for an unattended device
+	     harness and pointless for a single-window messenger. -->
+	<key>NSQuitAlwaysKeepsWindows</key>
+	<false/>
+</dict>
+</plist>

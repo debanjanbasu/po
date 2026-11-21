@@ -1,0 +1,31 @@
+# Trunk build/serve configuration for the gpui web target.
+#
+# Replaces the Dioxus.toml `[web]` section at the cutover. The threaded wasm
+# build (Veilid workers need SharedArrayBuffer) requires cross-origin
+# isolation, so serve and deploy both send COOP/COEP — matching
+# crates/gpui_web/examples/hello_web/Trunk.toml from the fork.
+#
+# wasm-opt: the feature set below must match what .cargo/config.toml hands
+# rustc for wasm32 (see the Dioxus.toml comment block for the per-flag
+# rationale — simd/multivalue/tail-call/sign-ext on top of trunk's five
+# defaults). `level = "z"` keeps the old `[web.wasm_opt]` aggressiveness.
+
+[build]
+locked = true
+no_sri = true
+target = "index.html"
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 8080
+no_spa = true
+
+[serve.headers]
+"Cache-Control" = "no-store"
+"Cross-Origin-Embedder-Policy" = "require-corp"
+"Cross-Origin-Opener-Policy" = "same-origin"
+
+[[hooks]]
+stage = "post_build"
+command = "sh"
+command_arguments = ["-c", "echo 'trunk build complete — verify target_features in dist/*.wasm before shipping'"]

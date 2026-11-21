@@ -1,0 +1,404 @@
+# Normal optimized builds until a representative, bounded PGO workload exists.
+# Verification inspects artifacts; it never starts the GUI or runs tests.
+# No production pepper is supplied. The desktop legs are unsigned CI build artifacts,
+# not install-ready releases. The android leg is the exception: it is signed with a
+# release identity that exists only in the `release` environment (see that job), so
+# its APK is installable — publishing still requires a separate trusted flow.
+name: Release build verification
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: '2'
+  NPM_CONFIG_ENGINE_STRICT: 'true'
+
+jobs:
+  release-build:
+    name: Release (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    # The pepper is derivation material for every password hash and for the DHT
+    # secret, so it is baked at build time and must never change once data
+    # exists. Without it the build reports `unprovisioned` and the artifacts are
+    # verification-only; with it they interoperate with the app's real data. The
+    # environment also gives the value protection rules instead of exposing it
+    # to every workflow in the repository.
+    environment: release
+    env:
+      OO_APP_PEPPER: ${{ secrets.OO_APP_PEPPER }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        # Per-target CPU baselines live in .cargo/config.toml. They must not be
+        # duplicated here: a RUSTFLAGS env var replaces every config rustflags
+        # entry, dropping the per-target sections.
+        include:
+          # Pinned, not `ubuntu-latest` (still 24.04), to match the arm64 row.
+          - os: ubuntu-26.04
+            target: x86_64-unknown-linux-gnu
+            binary: oo
+          - os: ubuntu-26.04-arm
+            target: aarch64-unknown-linux-gnu
+            binary: oo
+          # The app's deployment target is 27.0, so this needs the SDK 27 toolchain;
+          # `xcode-27` is the macOS 27 image that carries Xcode 27.
+          - os: xcode-27
+            target: aarch64-apple-darwin
+            binary: oo
+          # Server 2025 + VS2026 is the image `windows-latest` currently resolves
+          # to; naming it keeps a runner-image bump visible in the diff.
+          - os: windows-2025-vs2026
+            target: x86_64-pc-windows-msvc
+            binary: oo.exe
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            binary: oo.exe
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the repository Rust toolchain
+        run: bash scripts/ci-setup-rust.sh --target '${{ matrix.target }}'
+      # Upstream's Windows tools archive is Win32; ARM64 runs capnp under emulation.
+      - name: Install Cap'n Proto compiler on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $page = (Invoke-WebRequest -Uri 'https://capnproto.org/install.html').Content
+          $match = [regex]::Match($page, 'https://capnproto\.org/capnproto-c\+\+-win32-(?<version>[0-9][0-9A-Za-z.-]*)\.zip')
+          if (-not $match.Success) { throw 'Could not find the current Cap''n Proto Windows tools URL.' }
+          $version = $match.Groups['version'].Value
+          $archive = Join-Path $env:RUNNER_TEMP "capnproto-$version.zip"
+          $destination = Join-Path $env:RUNNER_TEMP 'capnproto'
+          Invoke-WebRequest -Uri $match.Value -OutFile $archive
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $tools = Join-Path $destination "capnproto-tools-win32-$version"
+          if (-not (Test-Path (Join-Path $tools 'capnp.exe'))) { throw "Cap'n Proto $version archive is missing capnp.exe." }
+          Add-Content -Path $env:GITHUB_PATH -Value $tools
+          & (Join-Path $tools 'capnp.exe') --version
+
+      - name: Record Apple build tools
+        if: runner.os == 'macOS'
+        run: |
+          {
+            xcodebuild -version
+            xcrun swift --version
+            xcrun --sdk macosx --show-sdk-version
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Install Cap'n Proto compiler on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew install capnp
+          capnp --version
+
+      - name: Install Linux desktop build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm libclang-dev pkg-config capnproto libdbus-1-dev \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev \
+            libayatana-appindicator3-dev librsvg2-dev libssl-dev
+      - name: Use LLVM for the Linux target link
+        if: runner.os == 'Linux'
+        run: |
+          {
+            echo "CC=clang"
+            echo "AR=llvm-ar"
+            echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang"
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=clang"
+          } >> "$GITHUB_ENV"
+          # No host-side equivalent here. `CARGO_HOST_RUSTFLAGS` was set on this
+          # step and did nothing: cargo ignores it unless the `host-config`
+          # feature is on, and `-Zhost-config` is no longer an option at all
+          # (cargo 1.101.0-nightly). Verified by rebuilding a host unit with
+          # `CARGO_HOST_RUSTFLAGS='--definitely-not-a-real-flag'` — a build that
+          # must fail if the flag were reaching rustc — and watching it succeed,
+          # while the same value in `RUSTFLAGS` failed immediately. Host units
+          # (build scripts, proc macros) therefore link with the default linker.
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 'latest'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Record application pepper provisioning state
+        shell: bash
+        run: |
+          set -euo pipefail
+          pepper=''
+          if [[ -n "${OO_APP_PEPPER:-}" ]]; then
+            pepper="$OO_APP_PEPPER"
+          elif [[ -f .env ]]; then
+            while IFS= read -r line || [[ -n "$line" ]]; do
+              key="${line%%=*}"
+              key="${key#"${key%%[![:space:]]*}"}"
+              key="${key%"${key##*[![:space:]]}"}"
+              if [[ "$key" == 'OO_APP_PEPPER' ]]; then
+                value="${line#*=}"
+                value="${value%"${value##*[![:space:]]}"}"
+                value="${value#\"}"; value="${value%\"}"
+                value="${value#\'}"; value="${value%\'}"
+                pepper="$value"
+                break
+              fi
+            done < .env
+          fi
+
+          if [[ -n "$pepper" ]]; then
+            printf '%s' "$pepper" | node -e '
+              let data = "";
+              process.stdin.setEncoding("utf8");
+              process.stdin.on("data", (chunk) => { data += chunk; });
+              process.stdin.on("end", () => {
+                const value = data.trim();
+                const decoded = /^[A-Za-z0-9+/]+={0,2}$/.test(value)
+                  ? Buffer.from(value, "base64")
+                  : Buffer.alloc(0);
+                const canonical = decoded.length > 0
+                  && (decoded.toString("base64") === value
+                    || decoded.toString("base64").replace(/=+$/, "") === value.replace(/=+$/, ""));
+                if (!canonical) {
+                  console.error("OO_APP_PEPPER is set but is not valid non-empty base64.");
+                  process.exit(1);
+                }
+              });
+            '
+            status=provisioned
+          else
+            status=unprovisioned
+          fi
+
+          echo "OO_PEPPER_STATUS=$status" >> "$GITHUB_ENV"
+          {
+            echo "Application pepper: $status"
+            if [[ "$status" == 'unprovisioned' ]]; then
+              echo "Artifact is unprovisioned: no application pepper was compiled in."
+            else
+              echo "Artifact was compiled with a supplied application pepper."
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Build the optimized application
+        timeout-minutes: 90
+        run: |
+          # The universal flags and the per-target CPU baseline live in
+          # .cargo/config.toml. A `RUSTFLAGS` env var would REPLACE both, so
+          # the only override here is the Linux-only lld link argument, which
+          # joins the config's own flags instead of replacing them.
+          # `--verbose` prints every rustc invocation, so the archive step
+          # records the baseline that actually reached the compiler instead of
+          # restating what the config is supposed to contribute.
+          build_log="$RUNNER_TEMP/cargo-build.log"
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            cargo build --release --bin oo --features desktop --target '${{ matrix.target }}' --verbose \
+              --config 'target."cfg(target_os = \"linux\")".rustflags=["-Clink-arg=-fuse-ld=lld"]' 2>&1 | tee "$build_log"
+          else
+            cargo build --release --bin oo --features desktop --target '${{ matrix.target }}' --verbose 2>&1 | tee "$build_log"
+          fi
+
+      # With gpui there is no bundler CLI: the `cargo build` exe above IS the
+      # ship artifact on Windows too (icon + version resources embed via the
+      # gpui `windows-manifest` feature). NSIS installer packaging moves to a
+      # follow-up script if the release flow wants one again.
+      - name: Verify and archive the payload that ships, without launching it
+        run: |
+          # gpui ships the direct cargo build on every target — one payload.
+          app_dir='target/${{ matrix.target }}/release'
+          mkdir -p target/release-artifacts
+          node scripts/verify-native-artifact.ts '${{ matrix.target }}' "$app_dir/${{ matrix.binary }}" \
+            > 'target/release-artifacts/oo-${{ matrix.target }}.json'
+          tar -czf 'target/release-artifacts/oo-${{ matrix.target }}.tar.gz' \
+            -C "$app_dir" '${{ matrix.binary }}'
+          # Provenance for the baselines in .cargo/config.toml: the flags below
+          # are the ones this target's rustc invocations really carried. With
+          # gpui there is one build (the cargo one), so the direct log is the
+          # source of truth for the shipped binary on every OS.
+          cpu_flags="$(grep -oE -- '-C target-(cpu|feature)=[^ ]*' "$RUNNER_TEMP/cargo-build.log" | sort -u | tr '\n' ' ')"
+          if [[ -z "$cpu_flags" ]]; then
+            echo 'ERROR: no -C target-cpu=/-C target-feature= flag reached rustc' >&2
+            exit 1
+          fi
+          {
+            echo "Compile/package verification only; no runtime or PGO validation."
+            if [[ "$OO_PEPPER_STATUS" == 'unprovisioned' ]]; then
+              echo "Unprovisioned artifact: no production pepper or signing material was supplied."
+            fi
+            echo "Linux/macOS archives are raw binaries, not asset-complete app bundles."
+            echo "Commit: $GITHUB_SHA"
+            echo "Toolchain: $RUSTUP_TOOLCHAIN"
+            echo "Target: ${{ matrix.target }}"
+            echo "Verified payload: $app_dir/${{ matrix.binary }}"
+            echo "Rust CPU flags: $cpu_flags"
+            echo "Application pepper: $OO_PEPPER_STATUS"
+            if [[ "$OO_PEPPER_STATUS" == 'unprovisioned' ]]; then
+              echo "Application pepper provisioning: unprovisioned (no pepper compiled in)."
+            else
+              echo "Application pepper provisioning: provisioned from the supplied value."
+            fi
+            rustc --version --verbose
+            cargo --version
+          } > 'target/release-artifacts/oo-${{ matrix.target }}-build.txt'
+          cat 'target/release-artifacts/oo-${{ matrix.target }}.json' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Ensure the build did not rewrite tracked inputs
+        run: git diff --exit-code
+
+      - name: Upload verified build artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oo-${{ matrix.target }}-release-build
+          path: target/release-artifacts/*
+          if-no-files-found: error
+          retention-days: 30
+
+  # The only job that signs anything, and the only place a keystore exists: R8
+  # minifies the DEX and the APK is signed with the release environment's key, so
+  # it is installable on a device. The signing material is written from secrets
+  # into the gitignored `target/` directory for the length of the build, and the
+  # (Historical: the dx-era `[bundle.android]` jks append; the gpui mobile flow
+  # the same step — none of it is ever committed, and none of it is in the tree
+  # signs through gradle.) Legacy references retained until the pin lands:
+  # the build is a release one, which is why the APK below is the first one this
+  # repository produces that is not a gradle *debug* variant.
+  #
+  # Setup mirrors the android leg of e2e.yml: ARM64 runner so the NDK's
+  # *-android37-clang wrapper matches the host, the image's preinstalled JDK 21
+  # and NDK.
+  android-release:
+    name: Release (aarch64-linux-android apk)
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 180
+    environment: release
+    env:
+      OO_APP_PEPPER: ${{ secrets.OO_APP_PEPPER }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the repository Rust toolchain
+        run: bash scripts/ci-setup-rust.sh --target aarch64-linux-android
+
+      - name: Install Android C build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm libclang-dev pkg-config capnproto
+          capnp --version
+
+      - name: Select the preinstalled JDK and NDK
+        run: |
+          # Gradle accepts JDK 17-27 only, and the image's default JDK may be
+          # newer, so pin 21 (exported per architecture as JAVA_HOME_21_ARM64).
+          # NDK r30 is the first that ships the *-android37-clang wrapper dx
+          # demands; r29 stops at 35.
+          echo "JAVA_HOME=${JAVA_HOME_21_ARM64:-$JAVA_HOME_21_X64}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          java -version
+          ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/ndk"
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 'latest'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # Android packaging moves from `dx build --platform android` to the
+      # gpui mobile backend flow (cargo-ndk + gradle) at the Phase 0 mobile
+      # pin alignment — see docs/migration-gpui-ce.md §1. Until the pin
+      # compiles, this leg builds the Rust library only and defers the APK.
+      - name: Record application pepper provisioning state
+        # The strict non-empty-base64 check lives in the desktop job; this leg
+        # only records whether a pepper was supplied for the APK's build.
+        run: |
+          if [[ -n "${OO_APP_PEPPER:-}" ]]; then status=provisioned; else status=unprovisioned; fi
+          echo "Application pepper: $status" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Build the Android Rust library (pending mobile-backend pin)
+        timeout-minutes: 90
+        continue-on-error: true
+        run: |
+          # cargo-ndk builds the cdylib the gpui_mobile backend links; the
+          # gradle APK assembly re-lands with the pin (the existing
+          # native/android gradle modules stay unchanged).
+          cargo install cargo-ndk
+          cargo ndk -t arm64-v8a build --release --lib --features mobile
+          ls -l target/aarch64-linux-android/release/
+
+      - name: Collect the Android artifact
+        run: |
+          mkdir -p target/release-artifacts
+          # APK assembly returns with the mobile-backend pin; the library is
+          # the interim artifact (upload stays `error` so the set assertion
+          # keeps catching an unfinished leg).
+          lib="target/aarch64-linux-android/release/liboo.so"
+          [[ -s "$lib" ]] || { echo "ERROR: missing $lib" >&2; exit 1; }
+          cp "$lib" target/release-artifacts/liboo-aarch64-linux-android.so
+          ls -l target/release-artifacts
+
+      - name: Upload the signed APK
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oo-aarch64-linux-android-build
+          path: target/release-artifacts/*
+          if-no-files-found: error
+          retention-days: 30
+
+  # Each matrix leg passes or fails on its own (`fail-fast: false`), so a run
+  # that published two of the five targets looks the same to anyone downloading
+  # the artifacts as a complete one. This is the only place that asserts the set.
+  artifact-set:
+    name: Artifact set completeness
+    needs:
+      - release-build
+      - android-release
+    if: always()
+    runs-on: ubuntu-26.04
+    permissions:
+      actions: read
+    steps:
+      - name: Assert every target published a build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The names below mirror the release-build matrix plus the android
+          # job; a target added there without being added here fails this check
+          # rather than silently widening the gap.
+          published="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
+            --paginate --jq '.artifacts[].name' | grep -- '-release-build$' | sort || true)"
+          missing=0
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc aarch64-linux-android; do
+            if ! grep -qx "oo-$target-release-build" <<<"$published"; then
+              echo "ERROR: no artifact oo-$target-release-build in this run" >&2
+              missing=1
+            fi
+          done
+          if [[ "$missing" == '1' ]]; then
+            echo "Published: ${published//$'\n'/ }" >&2
+            exit 1
+          fi
+          echo "All six target artifacts are present." | tee -a "$GITHUB_STEP_SUMMARY"

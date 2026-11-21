@@ -1,0 +1,64 @@
+[application]
+# No ios_entitlements/macos_entitlements keys: dx parses them but only signs from
+# `--apple-entitlements` / its auto-provisioning path, so a path here never reaches
+# codesign. Entitlements that are genuinely needed go under [ios.entitlements] /
+# [macos.entitlements], which dx's signing path does merge.
+ios_info_plist = "native/apple/Info.ios.plist"
+macos_info_plist = "native/apple/Info.macos.plist"
+android_manifest = "native/android/AndroidManifest.app.xml"
+android_main_activity = "native/android/MainActivity.kt"
+
+[bundle]
+identifier = "com.debanjanbasu.oo"
+publisher = "Debanjan Basu"
+# Consumed by `dx bundle` (macOS/Windows/Linux packaging). Plain `dx build`
+# ignores it; scripts/ inject icons for those flows instead. (The pinned dx
+# revision is declared in Cargo.lock — read it there, never here.)
+icon = ["assets/icons/icon.icns", "assets/icons/ios/AppIcon1024x1024.png"]
+# No `resources`: only dx's Linux/macOS/Windows bundlers call copy_resources, so a
+# resource entry never reaches an iOS .app (verified: the release bundle has none).
+# The iOS launch screen is UILaunchScreen in Info.ios.plist, which needs no file.
+
+[android]
+# Android API 37 is the explicit min/target/compile baseline. dx compiles
+# against the newest installed API 37 platform (e.g. android-37.2) and
+# build-tools; native modules in native/android inherit the app's compile SDK.
+min_sdk = 37
+target_sdk = 37
+compile_sdk = 37
+
+[web.app]
+
+# HTML title tag content
+title = "oo"
+
+# WASM binary optimizer (runs on `dx build --release`).
+# Requires wasm-opt: `cargo install wasm-opt` or via binaryen.
+# Dioxus always adds: --enable-reference-types, --enable-bulk-memory,
+#   --enable-mutable-globals, --enable-nontrapping-float-to-int, --enable-threads
+#
+# extra_features is the *complete* feature set wasm-opt is allowed to use, and it
+# must match what .cargo/config.toml hands rustc for wasm32 (simd128, multivalue,
+# sign-ext, tail-call on top of the five dx adds). It replaced `--all-features`,
+# which advertised 24 proposals — gc, memory64, strings, exception-handling and
+# the rest — in the shipped module's `target_features` section while rustc had
+# been given 9, and which is what dx's own default list drops (simd/multivalue/
+# tail-call/sign-ext must therefore be listed here; simd128 has no separate
+# `--enable-simd128`, binaryen 127 rejects it as an unknown option).
+#
+# `debug` is deliberately absent: dx overwrites this section's `debug` with its
+# `--debug-symbols` CLI flag, whose default is *true*, so the only effective
+# switch is `--debug-symbols=false` on the dx command line (see
+# docs/device-testing.md). wasm-opt failing is not visible either — dx logs the
+# error, copies the unoptimized module over the output and returns success, so a
+# green build alone proves nothing: compare the emitted module's size and
+# `target_features`.
+[web.wasm_opt]
+level = "z"
+extra_features = [
+    "--enable-simd",
+    "--enable-multivalue",
+    "--enable-tail-call",
+    "--enable-sign-ext",
+    "--closed-world",
+]

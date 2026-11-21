@@ -1,0 +1,223 @@
+[env]
+# Native deployment targets are explicit compatibility floors; update them
+# deliberately with the Swift and bundle settings.
+IPHONEOS_DEPLOYMENT_TARGET = "27.0"
+MACOSX_DEPLOYMENT_TARGET = "27.0"
+# Apple clang cannot compile C to wasm32-unknown-unknown.
+# These tell the `cc` crate to use Homebrew LLVM for WASM targets.
+# Install with: brew install llvm
+CC_wasm32_unknown_unknown = "/opt/homebrew/opt/llvm/bin/clang"
+AR_wasm32_unknown_unknown = "/opt/homebrew/opt/llvm/bin/llvm-ar"
+
+# Android NDK toolchain (ring/zstd's cc builds + the aarch64 linker above).
+# NDK r30's clang wrappers encode the target triple.
+CC_aarch64_linux_android = "/Users/debanjanbasu/Library/Android/sdk/ndk/30.0.16248370/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android30-clang"
+AR_aarch64_linux_android = "/Users/debanjanbasu/Library/Android/sdk/ndk/30.0.16248370/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
+CXX_aarch64_linux_android = "/Users/debanjanbasu/Library/Android/sdk/ndk/30.0.16248370/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android30-clang++"
+
+# Universal rustflags for every compilation target.
+# MUST live under [target.'cfg(all())'], not [build]: cargo treats
+# build.rustflags and target.*.rustflags as mutually exclusive sources
+# (target wins), so the per-target sections below would silently drop
+# anything placed in build.rustflags. cfg-based entries JOIN with the
+# triple-specific entries instead of replacing them.
+[target.'cfg(all())']
+rustflags = [
+    "--cfg", "tokio_unstable",
+    # Parallel rustc frontend, sized to the performance-core count
+    # (--jobs-frontend supersedes the deprecated -Zthreads; gated by
+    # -Zunstable-options).
+    "-Zunstable-options", "--jobs-frontend=32",
+]
+
+# ──────────────────────────────────────────────────────────────────
+# build-std: rebuild core/alloc/std from source so the profile-level
+# `panic = "immediate-abort"` (Cargo.toml) strips all panic formatting
+# strings from std too. Requires: `rustup component add rust-src`
+# WARNING: panic messages become "panic in a function that cannot
+# unwind" with zero context.
+# ──────────────────────────────────────────────────────────────────
+[unstable]
+build-std = ["std", "panic_abort", "core", "alloc"]
+panic-abort-tests = true
+profile-rustflags = true
+# Gate for `panic = "immediate-abort"` in Cargo.toml profiles — replaces
+# the old `-Zunstable-options -Cpanic=immediate-abort` rustflags hack.
+panic-immediate-abort = true
+# Gate for `hint-mostly-unused` in Cargo.toml (web-sys / windows).
+profile-hint-mostly-unused = true
+# Fingerprint by content checksum instead of mtime — kills spurious
+# rebuilds after branch switches and checkout churn.
+checksum-freshness = true
+# gitoxide fetches + shallow clones for git deps (dioxus is a large repo).
+gitoxide = "fetch"
+git = "shallow-deps"
+# Store crate metadata only in .rmeta files — smaller target/ dir.
+embed-metadata = false
+
+# ──────────────────────────────────────────────────────────────────
+# Per-profile rustflags (gated by `profile-rustflags` above). These APPEND to
+# the joined target rustflags; they only affect the profile they name.
+# Every flag below was probe-verified against rustc 1.102.0-nightly
+# (2026-11-13): `rustc -Zunstable-options -Z<flag> --edition 2024` on a stub.
+#
+# Dev profile:
+# - `-Zshare-generics=y` + `-Zinline-mir=no`: share generic instantiations
+#   across crates and skip MIR inlining, so a dependency change recompiles
+#   less and the frontend does less work per crate. Codegen-only — no
+#   semantic or ABI change within the profile.
+# - `-Zbinary-dep-depinfo`: track rlib/dylib deps in dep-info so a changed
+#   proc-macro or build-script output invalidates its dependents.
+#
+# All builds use the regular LLVM backend (LTO where the profile allows
+# it); no alternative codegen backend is configured.
+[profile.dev]
+rustflags = [
+    "-Zshare-generics=y",
+    "-Zinline-mir=no",
+    "-Zbinary-dep-depinfo",
+]
+# NOTE: `-Zdual-proc-macros` was probe-verified and fast for host builds but is
+# REJECTED here: with it in the dev profile, a `--target wasm32` build fails
+# with E0774 ("derive may only be applied to structs/enums/unions" in
+# wasm-bindgen's sys.rs) because the host proc-macro dylibs get built in a shape
+# the wasm rustc cannot load. Measured on rustc 1.102.0-nightly; a pristine-base
+# wasm check passes without it. Revisit if rustc fixes it.
+
+# Release profile: strip source locations from panics. Panics are
+# `immediate-abort` (Cargo.toml profiles + build-std panic_abort), so no panic
+# message is ever formatted, and `src/` uses no `line!()`/`Location`, so
+# nothing reads the removed detail. Smaller binaries.
+#
+# Release builds must keep the apple-m1 baseline so the shipped macOS binary
+# runs on the oldest supported Mac: set `-C target-cpu=apple-m1` for
+# release-only invocations (e.g. via `CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS`
+# in the release workflow) if the default cpu ever drifts newer than M1.
+[profile.release]
+rustflags = [
+    "-Zlocation-detail=none",
+    # Aggressive MIR optimisations for the shipped binary; LTO is already fat
+    # in Cargo.toml, so this compounds it. Probe-verified on 1.102.0-nightly.
+    "-Zmir-opt-level=4",
+]
+
+# VFE (-Zvirtual-function-elimination) requires nightly + LTO + embed-bitcode=yes,
+# but the current nightly LLVM crashes with "Do not know how to promote this operator!"
+# on bumpalo/core. lto = "fat" in Cargo.toml provides whole-program DCE.
+#
+# Per-profile rustflags (gated by `profile-rustflags` above) APPEND to
+# the joined target rustflags — an empty list clears nothing. A CI
+# override of the RUSTFLAGS env var replaces ALL config rustflags
+# (cfg(all()) and per-target alike) and must then re-include
+# `--cfg tokio_unstable`, the -Z flags, and any target-cpu baseline.
+# Release target-cpu baselines for distribution (e.g. apple-m1) belong in
+# the per-target sections below. A `cargo --config` override instead JOINS
+# with these sections, so it can add a flag (e.g. a Linux link argument)
+# without dropping a baseline — but it must not repeat a flag that is
+# already set here, or rustc rejects the duplicate.
+#
+# `CARGO_HOST_RUSTFLAGS` is NOT an override: cargo ignores it unless the
+# `host-config` feature is enabled, and `-Zhost-config` no longer exists
+# (checked on cargo 1.101.0-nightly), so a host-side flag set through it is
+# silently dropped. Verified by rebuilding a host unit with a bogus flag:
+# through `CARGO_HOST_RUSTFLAGS` the build succeeded, through `RUSTFLAGS` it
+# failed.
+
+# Per-target WASM features. Browser support is an explicit compatibility floor,
+# not an automatic latest-browser selector. +tail-call requires Safari 18.2+.
+# +tail-call (enabled 2026-08): LLVM emits return_call opportunistically —
+#   smaller code, O(1) stack for tail recursion. Chrome 112 / Firefox 121 /
+#   Safari 18.2. walrus 0.23.3 (dx) parses ReturnCall fine.
+# +atomics: veilid wasm has no thread support, and threads require COOP/COEP
+#   cross-origin isolation headers. Revisit only if veilid adds wasm threading.
+# +wide-arithmetic (checked 2026-10): dx CLI (walrus 0.26.5 in Dioxus `main`)
+#   and wasm-bindgen 0.2.129 both use walrus 0.26+, so the only remaining
+#   blocker is browser engine support: V8/Chrome has not shipped the proposal
+#   yet (phase 3; only JSC + SpiderMonkey have). Unblocks when Chrome ships.
+# +relaxed-simd: toolchain-safe (walrus 0.23.3 parses it), but LLVM only emits
+#   relaxed ops via explicit intrinsics or fast-math — neither used by our
+#   code or deps, so enabling changes nothing. Revisit if a dep adopts
+#   relaxed intrinsics (cfg(target_feature = "relaxed-simd") gated).
+# +gc / +exception-handling: Rust codegen uses neither (linear memory, abort).
+# +extended-const: no rustc codegen benefit; walrus 0.23 can't parse it anyway.
+#
+# CC: Apple clang cannot target wasm32-unknown-unknown.
+# Homebrew LLVM clang is required for C dependencies (zstd-sys).
+# Install with: brew install llvm
+# No --export=__heap_base needed (removed 2026-08): wasm-bindgen 0.2.127
+# dropped the requirement entirely (PR #5225 reserves thread memory after
+# memory.initial; single-threaded builds never needed it), and dx passes the
+# export itself for hotpatch (Thin/Fat) builds.
+[target.wasm32-unknown-unknown]
+rustflags = [
+    "-C", "target-feature=+bulk-memory,+crt-static,+multivalue,+mutable-globals,+nontrapping-fptoint,+reference-types,+sign-ext,+simd128,+tail-call",
+]
+
+# Threaded gpui web build (Phase 5): uncomment the +atomics feature and the
+# shared-memory linker block when the gpui-ce web target ships threaded
+# (gpui_ce_web "multithreaded" feature + COOP/COEP). The single-threaded
+# build must NOT link shared memory — it fails to instantiate without
+# isolation headers, which is why this stays opt-in.
+#   rustflags = [
+#       "-C", "target-feature=+bulk-memory,+crt-static,+multivalue,+mutable-globals,+nontrapping-fptoint,+reference-types,+sign-ext,+simd128,+tail-call,+atomics",
+#       "-C", "link-args=--shared-memory --max-memory=1073741824 --import-memory --export=__wasm_init_tls --export=__tls_size --export=__tls_align --export=__tls_base",
+#   ]
+
+# iOS deployment target 27.0; retain conservative A13 codegen.
+# Simulator target stays at host default (runs on build Mac, never ships).
+[target.aarch64-apple-ios]
+rustflags = [
+    "-C", "target-cpu=apple-a13",
+]
+
+# Android minSdk 37 (Android 17). Keep the ARMv8.1-mandatory +lse/+crc/+rdm
+# features; API level does not guarantee ARMv9/SVE2, fp16, or dotprod.
+# LSE is the real win: single CAS instructions instead of LL/SC loops for
+# tokio/veilid atomics. No target-cpu: big.LITTLE heterogeneity makes one core
+# model wrong. x86_64-linux-android (emulator-only) stays on the default.
+[target.aarch64-linux-android]
+rustflags = ["-C", "target-feature=+lse,+crc,+rdm"]
+
+# Panic strategy comes from the profiles in Cargo.toml
+# (`panic = "immediate-abort"`) — no per-target panic flags needed.
+#
+# Shipping-safe defaults also apply to local release and dx bundles.
+# Opt into target-cpu=native explicitly only for non-distributed local builds.
+#
+# Apple Silicon (aarch64-apple-darwin): NO explicit target-cpu — the target's
+# default cpu is used (identical feature set to apple-m1 on current build
+# hosts; release builds re-add the M1 baseline via the note in
+# [profile.release] below so the shipped binary runs on the oldest supported
+# Mac).
+[target.aarch64-apple-darwin]
+rustflags = []
+
+# Linux x86_64: baseline x86-64-v3 (Haswell+, AVX2/BMI2/FMA).
+# Optional mold linker (Linux only): install via `sudo apt install mold`,
+# then uncomment the lines below. Defaults to the system linker.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=x86-64-v3"]
+# linker = "clang"  # Uncomment if clang preferred over gcc
+# rustflags = ["-C", "target-cpu=x86-64-v3", "-C", "link-arg=-fuse-ld=mold"]  # Uncomment if mold installed
+
+# Linux aarch64: portable ARMv8 baseline, never the build host's CPU.
+# LSE/CRC/RDM are mandatory on every ARMv8.1+ core (2020 onward — Ampere Altra,
+# Graviton 2/3, Apple silicon), and LSE is what turns tokio/veilid's atomics
+# from LL/SC retry loops into single instructions. The generic target-cpu
+# would have left them out.
+[target.aarch64-unknown-linux-gnu]
+rustflags = [
+    "-C", "target-cpu=generic",
+    "-C", "target-feature=+lse,+crc,+rdm",
+]
+
+# Windows x86_64: baseline x86-64-v3 (Win11 floor = Intel 8th gen / Zen+,
+# AVX2 but no AVX-512 — v4 would exclude modern Intel consumer chips).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-cpu=x86-64-v3"]
+
+# Windows on ARM: Snapdragon X Elite/Plus (Oryon, 2024+) is the supported
+# hardware baseline. oryon-1 excludes pre-X Snapdragon 8cx devices, including
+# Surface Pro 9 5G and older.
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-cpu=oryon-1"]

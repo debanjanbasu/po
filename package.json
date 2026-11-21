@@ -1,0 +1,35 @@
+{
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=26.13.0"
+  },
+  "scripts": {
+    "landing:dev": "cd landing && astro dev",
+    "landing:build": "cd landing && astro build",
+    "landing:preview": "cd landing && astro preview",
+    "e2e": "node test/run.ts",
+    "lint": "oxlint --config .oxlintrc.json",
+    "lint:fix": "oxlint --config .oxlintrc.json --fix",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "overrides": {
+    "postcss-selector-parser": "^6.1.6"
+  },
+  "devDependencies": {
+    "@iconify-json/heroicons": "^1.2.3",
+    "@iconify-json/line-md": "^1.2.16",
+    "@iconify/tailwind4": "^1.2.3",
+    "@tailwindcss/cli": "^4.3.5",
+    "@tailwindcss/typography": "^0.5.20",
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/node": "^26.6.6",
+    "astro": "^7.4.13",
+    "daisyui": "^5.8.1",
+    "oxlint": "^1.94.0",
+    "oxlint-tsgolint": "^7.0.2007",
+    "playwright": "^1.65.1",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "tagline": "Local-first, decentralized, peer-to-peer platform",
+  "description": "Private messaging, no servers. Your data stays on your devices, synced peer-to-peer. AI-enhanced, self-improving, and fully under your control.",
+  "features": [
+    {
+      "icon": "icon-[line-md--cellphone]",
+      "title": "Local-first",
+      "short": "Your data never leaves your device unless you choose to sync",
+      "detail": "Offline-capable — works without internet, syncs when connected"
+    },
+    {
+      "icon": "icon-[line-md--security-twotone]",
+      "title": "End-to-end encrypted",
+      "short": "AEAD encryption (Argon2 keys) with HPKE-wrapped conversation keys",
+      "detail": "AEAD + HPKE (RFC 9180) — not even we can read your messages"
+    },
+    {
+      "icon": "icon-[line-md--compass-twotone]",
+      "title": "Decentralized",
+      "short": "No servers, powered by the Veilid network (DHT)",
+      "detail": "No servers — identity and data live on the Veilid DHT"
+    },
+    {
+      "icon": "icon-[line-md--cloud-alt-loop]",
+      "title": "Conflict-free sync",
+      "short": "Cross-device sync — conflict-free merging via Automerge CRDTs",
+      "detail": "CRDT-based sync queue with retry and dead letter recovery"
+    },
+    {
+      "icon": "icon-[line-md--backup-restore]",
+      "title": "Time Travel",
+      "short": "Automatic backups with point-in-time restore for your data",
+      "detail": "CRDT compaction creates automatic snapshots — browse history and restore deleted items"
+    },
+    {
+      "icon": "icon-[line-md--folder-zip]",
+      "title": "Smart compression",
+      "short": "Zstd compression — level 22 with trained dictionaries for minimal bandwidth",
+      "detail": "Trained Zstd dictionaries that improve over time"
+    },
+    {
+      "icon": "icon-[line-md--speed-loop]",
+      "title": "Native speed",
+      "short": "Multi-platform — Web, Desktop, Mobile from a single codebase (Dioxus)",
+      "detail": "Built in Rust — iOS, Android, Desktop, and Web"
+    },
+    {
+      "icon": "icon-[line-md--star-pulsating-filled-loop]",
+      "title": "Agentic AI",
+      "short": "Coming soon: on-device AI agents that work for you, privately",
+      "detail": "Coming soon — on-device AI agents that work for you, privately"
+    },
+    {
+      "icon": "icon-[line-md--cog-filled-loop]",
+      "title": "Self-improving",
+      "short": "Periodic recompression and optimization in the background",
+      "detail": "Periodic recompression and optimization in the background"
+    }
+  ],
+  "tech_badges": ["Rust", "Dioxus", "Veilid DHT", "Automerge CRDTs", "Cap'n Proto", "Zstd + dictionaries", "Argon2"],
+  "links": {
+    "veilid": "https://veilid.com",
+    "automerge": "https://automerge.org",
+    "dioxus": "https://dioxuslabs.com",
+    "zstd": "https://facebook.github.io/zstd",
+    "capnproto": "https://capnproto.org"
+  }
+}

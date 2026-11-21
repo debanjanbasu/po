@@ -1,0 +1,35 @@
+---
+import Base from '../../layouts/Base.astro';
+---
+
+<Base title="Privacy Policy — oo" description="Privacy policy for the oo decentralized messenger.">
+  <div class="flex justify-center min-h-dvh p-6">
+    <div class="max-w-2xl w-full py-8">
+      <a href="/" class="link link-secondary mb-6 inline-block">← Back home</a>
+
+      <article class="prose">
+        <h1>Privacy Policy</h1>
+        <p class="text-base-content/65">Last updated: April 2026</p>
+
+        <h2>No data collection</h2>
+        <p>We do not collect any personally identifiable information (PII) from users. oo is a local-first, decentralized messenger — all your data stays on your devices and is synced peer-to-peer via the Veilid distributed hash table (DHT).</p>
+
+        <h2>Encryption</h2>
+        <p>All data is end-to-end encrypted using AEAD encryption. Passwords are hashed using Argon2. We have no ability to decrypt or access your data.</p>
+
+        <h2>Volunteer network</h2>
+        <p>The platform operates through a network of volunteers. We cannot endorse or control all user contributions or content on the network.</p>
+
+        <h2>No tracking</h2>
+        <p>oo does not use any third-party analytics, tracking, advertising, or cookies — in the app or on this website.</p>
+
+        <h2>This website</h2>
+        <p>This website (oo-app.pages.dev) is a static site hosted on Cloudflare Pages. Share links use path-based universal/app-link routes (`/c/...`, `/p/...`) so iOS and Android can hand off directly to the app. Those paths may appear in browser history and basic hosting/CDN logs when opened in a browser.</p>
+        <p>Pairing links still carry encrypted, short-lived payloads.</p>
+
+        <h2>Contact</h2>
+        <p>For privacy questions, reach out via the contact methods listed on our website.</p>
+      </article>
+    </div>
+  </div>
+</Base>

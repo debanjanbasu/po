@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.debanjanbasu.oo",
+      "sha256_cert_fingerprints": [
+        "RELEASE_BLOCKER_ANDROID_SHA256_CERT_FINGERPRINT"
+      ]
+    }
+  }
+]

@@ -1,0 +1,52 @@
+---
+import '../styles/global.css';
+interface Props {
+  title: string;
+  description: string;
+}
+
+const canonicalURL = new URL(Astro.url.pathname, Astro.site);
+const { title, description } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonicalURL} />
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="sitemap" href="/sitemap.xml" />
+
+    <!-- Preload font to eliminate FOIT -->
+    <link rel="preload" href="/fonts/3270-Regular.woff2" as="font" type="font/woff2" crossorigin />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonicalURL} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:site_name" content="po" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+
+    <!-- Theme color for mobile browsers -->
+    <meta name="theme-color" content="#e9a23b" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <title>{title}</title>
+  </head>
+  <body class="min-h-dvh bg-base-100 text-base-content">
+    <a class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-box focus:bg-base-100 focus:px-4 focus:py-3 focus:font-semibold focus:text-base-content focus:ring-2 focus:ring-secondary" href="#main-content">Skip to main content</a>
+    <main id="main-content" tabindex="-1">
+      <slot />
+    </main>
+  </body>
+</html>

@@ -1,0 +1,403 @@
+# Tandem end-to-end runs (device-testing.md scenarios) on GitHub-hosted runners.
+#
+# NOT YET A PR GATE — see .github/workflows/README-e2e.md for what is verified,
+# what is aspirational, and what is left before this becomes a PR gate. The
+# harness is verified locally (docs/device-testing.md § Phases); on the runners
+# `web` and `apple` have run green, and `android`'s ARM64 job has not been
+# dispatched yet — it is the one still owing a fix.
+#
+# workflow_dispatch only on purpose: `web` still owes the second green run that
+# would earn it a `pull_request`/`schedule` trigger of its own, macOS minutes
+# bill at $0.062/min on this private repo (Linux x64 $0.006, Linux arm64 $0.005),
+# and `apple`/`android` stay `continue-on-error` until they are trusted.
+name: Tandem e2e
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: '2'
+  DX_TELEMETRY_ENABLED: 'false'
+  NPM_CONFIG_ENGINE_STRICT: 'true'
+  # `build.rs` bakes this into the binary and signup derives its keys from it, so
+  # a build without it fails at runtime with "Signup failed: … PO_APP_PEPPER must
+  # be set at build time" — which is exactly how the first CI dispatch died.
+  # A secret wins, then a repository variable, then this committed fallback —
+  # the deliberate exception README.md § "App Pepper" describes: it is a test
+  # value for a `--features e2e-seams` build that is never distributed, and both
+  # peers of a run come from one build, so any single consistent value lets them
+  # interoperate. Set `gh secret set PO_APP_PEPPER` or
+  # `gh variable set PO_APP_PEPPER` to use a real one. Must be valid base64 —
+  # `helpers/encryption.rs` base64-decodes it at first use, and rejects empty.
+  PO_APP_PEPPER: ${{ secrets.PO_APP_PEPPER || vars.PO_APP_PEPPER || 'b28tZTJlLXRlc3QtcGVwcGVyLW5vdC1hLXNlY3JldA==' }}
+
+jobs:
+  # `src/main.rs` embeds `assets/tailwind.css` through `asset!`, and that file is
+  # generated (so, gitignored) — every `dx build` here needs it before it starts,
+  # or the build dies with "Path …/assets/tailwind.css not found". quality.yml
+  # has the same job for the same reason; this is its counterpart, not a duplicate
+  # of the work: each workflow runs on its own runner and cannot reuse the other's
+  # artifact.
+  stylesheet:
+    name: Compile locked stylesheet
+    # Compiles the gitignored `assets/tailwind.css` every `dx build` embeds; see
+    # .github/workflows/stylesheet.yml for why it is a reusable workflow.
+    uses: ./.github/workflows/stylesheet.yml
+  web:
+    name: Web tandem (ARM64)
+    needs: stylesheet
+    # Green on the runner (README-e2e.md § Verified on the runners): the apt
+    # clang/lld wasm build and Playwright's Chromium both work on this image —
+    # Chromium was the only piece not previously exercised here. What is left is
+    # the second green run that would earn this a `pull_request` trigger.
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 180
+    env:
+      # .cargo/config.toml's CC_wasm32_* point at a Homebrew path; the wasm
+      # backend needs clang/lld from apt instead (same override as quality.yml).
+      CC: clang
+      AR: llvm-ar
+      CC_wasm32_unknown_unknown: clang
+      AR_wasm32_unknown_unknown: llvm-ar
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: clang
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 'latest'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Download compiled stylesheet
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: compiled-tailwind-css
+          path: assets
+
+      - name: Install the repository Rust toolchain
+        run: bash scripts/ci-setup-rust.sh --target wasm32-unknown-unknown
+
+      - name: Install Web C build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm capnproto
+          capnp --version
+
+      - name: Install the locked browser and Node dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Restore the locked Dioxus CLI
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.ci-bin
+          key: dx-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build or reuse the locked Dioxus CLI
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/dioxus-cli-target
+        run: bash scripts/ci-setup-dx.sh
+
+      - name: Build the web app
+        # dx's wasm-opt debug-symbol default is true, and Dioxus.toml cannot
+        # override it — `build/web.rs` rebuilds the config from `debug_symbols`
+        # — so the flag belongs on the command line. It also drops
+        # wasm-bindgen's --debug pass, which is most of the JS shrink.
+        run: dx build --release --features e2e-seams --platform web --debug-symbols=false
+
+      - name: Run every web-capable scenario on two isolated browser contexts
+        # The catalog is the registry's (`test/scenarios/registry.ts`), never a
+        # list here: `--list --names` with `--surfaces web` prints the scenarios
+        # the web surface carries, so one added to the registry is swept with no
+        # edit to this file, and the native-only ones drop out on their own
+        # declaration. `web` is the one surface with no hardware dependency, so it
+        # gets the whole catalog rather than smoke alone. A scenario whose steps
+        # need a capability the web surface lacks records a SKIP in its
+        # result.json instead of failing, so the sweep stays honest about what it
+        # covered. One process per scenario: state is per-account and per-launch,
+        # and a scenario must not inherit another's browser or Veilid session.
+        run: |
+          scenarios=$(node test/run.ts --list --names --surfaces web) || {
+            echo "::error::the harness could not list the web catalog"
+            exit 1
+          }
+          if [ -z "$scenarios" ]; then
+            echo "::error::the registry named no scenario the web surface carries"
+            exit 1
+          fi
+          echo "web catalog: $scenarios"
+          failed=""
+          while read -r scenario; do
+            echo "::group::$scenario"
+            node test/run.ts --scenario "$scenario" --surfaces web || failed="$failed $scenario"
+            echo "::endgroup::"
+          done <<< "$scenarios"
+          if [ -n "$failed" ]; then
+            echo "::error::scenarios that failed:$failed"
+            exit 1
+          fi
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-web-${{ github.run_id }}
+          path: test/runs/**
+          if-no-files-found: error
+          retention-days: 14
+
+  apple:
+    name: Apple tandem (macOS + iOS simulator)
+    # PARTLY TRUSTED — `S1` ran green here (README-e2e.md § Verified on the
+    # runners): a windowless runner does launch the macOS app (no WindowServer
+    # session, no TCC prompt), the `ios-sim` bundle dx emits does install, and the
+    # simulator does boot. Still unverified: the `S18` locality step below (added
+    # after that run), and the simulator as anything but an idled third surface.
+    needs: stylesheet
+    runs-on: xcode-27
+    timeout-minutes: 180
+    continue-on-error: true
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the repository Rust toolchain
+        # wasm32 as well: this job builds the web anchor, not just the two
+        # native joiners.
+        run: bash scripts/ci-setup-rust.sh --target aarch64-apple-darwin --target aarch64-apple-ios-sim --target wasm32-unknown-unknown
+
+      - name: Install Cap'n Proto compiler and the Homebrew LLVM toolchain
+        # .cargo/config.toml points CC_wasm32_unknown_unknown at Homebrew LLVM,
+        # which Apple clang cannot replace for the wasm target.
+        run: |
+          brew install capnp llvm
+          capnp --version
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 'latest'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install the locked browser and Node dependencies
+        # The S1 anchor is the web surface, so this job needs Chromium too.
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Download compiled stylesheet
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: compiled-tailwind-css
+          path: assets
+
+      - name: Record the Xcode generation and simulator runtimes
+        run: |
+          {
+            xcodebuild -version
+            xcrun --sdk iphoneos --show-sdk-version
+            xcrun simctl list runtimes
+            xcrun simctl list devices available
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Restore the locked Dioxus CLI
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.ci-bin
+          key: dx-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build or reuse the locked Dioxus CLI
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/dioxus-cli-target
+        run: bash scripts/ci-setup-dx.sh
+
+      - name: Build the web app
+        # The S1 anchor is the web surface.
+        # dx's wasm-opt debug-symbol default is true, and Dioxus.toml cannot
+        # override it — `build/web.rs` rebuilds the config from `debug_symbols`
+        # — so the flag belongs on the command line. It also drops
+        # wasm-bindgen's --debug pass, which is most of the JS shrink.
+        run: dx build --release --features e2e-seams --platform web --debug-symbols=false
+
+      - name: Build the macOS app
+        run: dx build --release --features e2e-seams --platform macos
+
+      - name: Build the iOS simulator app
+        # `--target` is a valid `dx build` flag (rustc triple); it pins the
+        # simulator build explicitly. Note Mach-O platform 7 is
+        # PLATFORM_IOSSIMULATOR (IOS is 2) — `otool -l` looks like a device
+        # build at a glance.
+        run: dx build --release --features e2e-seams --platform ios --target aarch64-apple-ios-sim
+
+      - name: Run the pairing scenario on the macOS app and an iOS simulator
+        # The anchor is the web surface (the only one with a DOM to type the
+        # account password into); macOS and the simulator are joiners. simctl
+        # only: no signing identity, no xtool, no physical device.
+        run: node test/run.ts --scenario S1 --surfaces web,macos,ios-sim
+
+      - name: Assert LAN locality on the runner's own Mac
+        # S18 cannot run on the web job: WASM Veilid has no UDP, so every peer
+        # would SKIP and the run would report "PASS — NOT coverage". This host is
+        # a LAN node, which is where the assertion means something — the node
+        # reaching its own LocalNetwork routing domain, and the peer addresses it
+        # observed classified local vs remote. It asserts locality, not that two
+        # devices found each other: no route or transport information is exposed
+        # to the app, so a direct-path claim is not available.
+        run: node test/run.ts --scenario S18 --surfaces macos
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-apple-${{ github.run_id }}
+          path: test/runs/**
+          if-no-files-found: error
+          retention-days: 14
+
+  android:
+    name: Android emulator tandem (ARM64)
+    # ASPIRATIONAL — the APK installs and starts on a local AVD (README-e2e.md
+    # § Per job), but the harness's adb/`input text` typing path has never run
+    # against a *headless* AVD, which is what this job asks of it.
+    #
+    # ARM64 host, ARM64 image: that pairing runs under KVM with no translation,
+    # and it is the only one the repo can actually build for. `dx` pins
+    # abiFilters to the build triple, so the default android triple
+    # (aarch64-linux-android, which `test/surfaces/android.ts` builds) is what an
+    # arm64 AVD installs — the x86_64 job this replaces had to override `--target`
+    # purely to match its emulator. `/dev/kvm` was missing on ubuntu-26.04-arm when
+    # this job was first written (actions/runner-images#14549, closed 2026-08-12);
+    # the step below fails loudly rather than silently falling back to full QEMU
+    # emulation if that ever regresses. An earlier LTS arm64 image is the known-good
+    # fallback — it has always shipped `/dev/kvm`.
+    needs: stylesheet
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 240
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Require KVM
+        # Checked before anything expensive: without /dev/kvm the AVD still boots,
+        # but under full QEMU emulation, and a 4-hour job then fails on timeouts
+        # that look like app bugs. See the job comment for the fallback runner.
+        run: |
+          [[ -e /dev/kvm ]] || {
+            echo "::error::/dev/kvm is absent — an arm64 AVD here would run under full QEMU emulation. Retarget this job at an earlier LTS arm64 image, which has always shipped it."
+            exit 1
+          }
+          ls -l /dev/kvm
+
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install the repository Rust toolchain
+        run: bash scripts/ci-setup-rust.sh --target aarch64-linux-android
+
+      - name: Install Android C build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm libclang-dev pkg-config capnproto
+          capnp --version
+
+      - name: Download compiled stylesheet
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: compiled-tailwind-css
+          path: assets
+
+      - name: Select the preinstalled JDK and NDK
+        run: |
+          # Gradle accepts JDK 17-27 only, and the image's default JDK may be
+          # newer, so pin 21 — the runner exports it per architecture
+          # (`JAVA_HOME_21_ARM64` here; the `_X64` name is for x86 runners).
+          # NDK r30 is the newest under $ANDROID_HOME and the first that ships the
+          # *-android37-clang wrapper dx demands (r29 stops at 35), so pin the env
+          # var at it rather than r27.
+          echo "JAVA_HOME=${JAVA_HOME_21_ARM64:-$JAVA_HOME_21_X64}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          java -version
+          ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/ndk"
+
+      - name: Restore the locked Dioxus CLI
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.ci-bin
+          key: dx-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build or reuse the locked Dioxus CLI
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/dioxus-cli-target
+        run: bash scripts/ci-setup-dx.sh
+
+      - name: Build the release APK
+        # No `--target`: dx pins abiFilters to the build triple, and the default
+        # android triple is aarch64 — the ABI this arm64 AVD installs. The x86_64
+        # job this replaces had to override it only because its emulator was x86.
+        #
+        # `--release` for the same reason `test/surfaces/android.ts` builds with
+        # it: dx then still emits a gradle *debug* variant (nothing in-repo
+        # configures release signing, so AGP would write an `app-release-unsigned`
+        # APK that `adb install` rejects), but its `libmain.so` is stripped — 28 MB
+        # against the debug build's 952 MB uncompressed, which does not fit on the
+        # emulator's /data. The surface looks for the release path first, so a
+        # debug build here would be both wrong and ignored.
+        run: dx build --release --features e2e-seams --platform android
+
+      - name: Boot the emulator and run the tandem scenario
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          # `google_apis_ps16k` = Google Play **services**, no Play **Store** app,
+          # and it is the only non-Store arm64 image Google publishes for the 37.x
+          # minor versions. That distinction is the one this app cares about: the
+          # Android QR scanner delegates to Play services
+          # (`play-services-code-scanner` → ML Kit `GmsBarcodeScanning`, whose
+          # implementation "resides entirely within Google Play services"), while
+          # the Store app is only needed for *install-time* module download — and
+          # that path requires Play distribution anyway. Nothing in the repo uses
+          # the Store app. The `ps16k` (16 KB page size) family is what this
+          # machine's own AVD runs, so local and CI stay comparable; switch to
+          # `google_apis_playstore_ps16k` only if a scenario ever exercises Play
+          # itself (in-app updates, install-time module download).
+          api-level: '37.2'
+          target: google_apis_ps16k
+          arch: arm64-v8a
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          emulator-boot-timeout: 600
+          script: node test/run.ts --surfaces android
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-android-${{ github.run_id }}
+          path: test/runs/**
+          if-no-files-found: error
+          retention-days: 14

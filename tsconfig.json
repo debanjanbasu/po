@@ -1,0 +1,29 @@
+{
+  // Harness + CI scripts. The landing page is an Astro project with its own
+  // tsconfig (landing/tsconfig.json), so it is deliberately not in `include` —
+  // the linter picks the nearest config per file.
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["esnext"],
+    "types": ["node"],
+
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+
+    // AGENTS.md requires directly executed .ts files to stay within Node's
+    // erasable syntax (no enums, namespaces, parameter properties, decorators).
+    "erasableSyntaxOnly": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["test/**/*.ts", "scripts/**/*.ts"]
+}

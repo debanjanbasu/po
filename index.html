@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>{app_title}</title>
+        <meta content="text/html;charset=utf-8" http-equiv="Content-Type">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta charset="UTF-8">
+        <!-- dx's prod.index.html, which it no longer supplies because this file
+             exists, plus one wasm preload. The JS glue fetches the module itself
+             only after the ~207 KB JS has arrived; preloading it starts that
+             round trip a request earlier. dx omits the preload because Safari
+             re-downloads when a preload's fetch options differ from the real
+             request, so `as="fetch"` + `crossorigin` are not optional: they give
+             the preload (mode: cors, credentials: same-origin) the defaults
+             `fetch(url)` uses in the emitted glue. Both URLs below come from the
+             same placeholders dx substitutes into the glue, so they cannot
+             drift from the content-hashed asset names. -->
+        <link rel="preload" as="fetch" type="application/wasm" href="/{base_path}/{wasm_path}" crossorigin>
+        {style_include}
+    </head>
+    <body>
+        <div id="main"></div>
+    </body>
+</html>

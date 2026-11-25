@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Full Info.plist for the iOS bundle. dx writes this file verbatim
+     ([application] ios_info_plist), so every required key must be here.
+     Keep CFBundleShortVersionString/CFBundleVersion in sync with Cargo.toml. -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en_US</string>
+	<key>CFBundleDisplayName</key>
+	<string>po</string>
+	<key>CFBundleExecutable</key>
+	<string>po</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.debanjanbasu.po</string>
+	<key>CFBundleName</key>
+	<string>po</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>iPhoneOS</string>
+		<string>iPadOS</string>
+	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.debanjanbasu.po.pair</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>po</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>0.1.0</string>
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>AppIcon60x60</string>
+			</array>
+		</dict>
+	</dict>
+	<key>CFBundleIcons~ipad</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>AppIcon60x60</string>
+				<string>AppIcon76x76</string>
+				<string>AppIcon83.5x83.5</string>
+			</array>
+		</dict>
+	</dict>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<true/>
+	</dict>
+	<!-- Deployment floor, kept equal to IPHONEOS_DEPLOYMENT_TARGET in
+	     .cargo/config.toml (and to the binaries' `minos`); tooling that reads
+	     the plist rather than the Mach-O needs it here. -->
+	<key>MinimumOSVersion</key>
+	<string>27.0</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_veilid._udp</string>
+		<string>_veilid._tcp</string>
+	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Scan QR codes for device pairing</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Authenticate with Face ID or fingerprint</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Connect to peers on the local network</string>
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>1</integer>
+		<integer>2</integer>
+	</array>
+	<!-- iOS 14+ launch screen. An empty dict gives UIKit the same plain
+	     system-background screen the LaunchScreen storyboard it replaced drew,
+	     with no resource in the bundle to compile or reference. -->
+	<key>UILaunchScreen</key>
+	<dict/>
+	<!-- Distraction-free by default. The shell already draws edge-to-edge (its
+	     viewport meta carries `viewport-fit=cover`) and every strip respects
+	     `env(safe-area-inset-*)`, so the status bar only repeats space the app
+	     has already left clear. This is the app-level pair iOS honours under
+	     the scene lifecycle: the view-controller-based setting must be OFF for
+	     `UIStatusBarHidden` to be authoritative, and it stays correct for a
+	     scene host that never subclassed its root view controller. -->
+	<key>UIStatusBarHidden</key>
+	<true/>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<false/>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+		<string>metal</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportsTrueScreenSizeOnMac</key>
+	<true/>
+</dict>
+</plist>

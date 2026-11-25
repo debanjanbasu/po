@@ -1,0 +1,32 @@
+# Cloudflare Pages header profile for the app's own origin.
+#
+# `public/` is dx's static directory (`[application] public_dir`, default
+# "public"): a release `dx build --platform web` copies it verbatim into the
+# emitted `public/`, so this file ships next to index.html and assets/ and the
+# host applies it. It is NOT the landing's file and NOT the landing's headers —
+# the two are separate origins (see docs/device-testing.md).
+#
+# Not verified live: nothing is deployed to this origin yet, and the landing's
+# `/*` rules currently answer there because the app origin has no profile of its
+# own. The three headers below that would stop the app are why this file exists:
+#   * script-src needs 'wasm-unsafe-eval' — without it Chrome and Firefox refuse
+#     to compile the module;
+#   * connect-src needs wss: — a WebSocket is governed by connect-src, and
+#     without it Veilid gets no network;
+#   * camera must be allowed — `camera=()` somewhere up the chain kills the
+#     browser QR scanner.
+# No COEP/COOP isolation pair: the module has no threads (atomics are off in
+# .cargo/config.toml) and shares no memory with a worker, so cross-origin
+# isolation would only break camera/network resources.
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+  Permissions-Policy: camera=(self), microphone=(), geolocation=(), payment=(), usb=(), serial=(), interest-cohort=()
+  Cross-Origin-Opener-Policy: same-origin
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' wss:; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; object-src 'none'

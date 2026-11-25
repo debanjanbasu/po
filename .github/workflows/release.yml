@@ -1,0 +1,543 @@
+# Normal optimized builds until a representative, bounded PGO workload exists.
+# Verification inspects artifacts; it never starts the GUI or runs tests.
+# No production pepper is supplied. The desktop legs are unsigned CI build artifacts,
+# not install-ready releases. The android leg is the exception: it is signed with a
+# release identity that exists only in the `release` environment (see that job), so
+# its APK is installable — publishing still requires a separate trusted flow.
+name: Release build verification
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: '2'
+  DX_TELEMETRY_ENABLED: 'false'
+  NPM_CONFIG_ENGINE_STRICT: 'true'
+
+jobs:
+  release-build:
+    name: Release (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    # The pepper is derivation material for every password hash and for the DHT
+    # secret, so it is baked at build time and must never change once data
+    # exists. Without it the build reports `unprovisioned` and the artifacts are
+    # verification-only; with it they interoperate with the app's real data. The
+    # environment also gives the value protection rules instead of exposing it
+    # to every workflow in the repository.
+    environment: release
+    env:
+      PO_APP_PEPPER: ${{ secrets.PO_APP_PEPPER }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        # Per-target CPU baselines live in .cargo/config.toml. They must not be
+        # duplicated here: a RUSTFLAGS env var replaces every config rustflags
+        # entry, dropping the per-target sections.
+        include:
+          # Pinned, not `ubuntu-latest` (still 24.04), to match the arm64 row.
+          - os: ubuntu-26.04
+            target: x86_64-unknown-linux-gnu
+            binary: po
+          - os: ubuntu-26.04-arm
+            target: aarch64-unknown-linux-gnu
+            binary: po
+          # The app's deployment target is 27.0, so this needs the SDK 27 toolchain;
+          # `xcode-27` is the macOS 27 image that carries Xcode 27.
+          - os: xcode-27
+            target: aarch64-apple-darwin
+            binary: po
+          # Server 2025 + VS2026 is the image `windows-latest` currently resolves
+          # to; naming it keeps a runner-image bump visible in the diff.
+          - os: windows-2025-vs2026
+            target: x86_64-pc-windows-msvc
+            binary: po.exe
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            binary: po.exe
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the repository Rust toolchain
+        run: bash scripts/ci-setup-rust.sh --target '${{ matrix.target }}'
+      # Upstream's Windows tools archive is Win32; ARM64 runs capnp under emulation.
+      - name: Install Cap'n Proto compiler on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $page = (Invoke-WebRequest -Uri 'https://capnproto.org/install.html').Content
+          $match = [regex]::Match($page, 'https://capnproto\.org/capnproto-c\+\+-win32-(?<version>[0-9][0-9A-Za-z.-]*)\.zip')
+          if (-not $match.Success) { throw 'Could not find the current Cap''n Proto Windows tools URL.' }
+          $version = $match.Groups['version'].Value
+          $archive = Join-Path $env:RUNNER_TEMP "capnproto-$version.zip"
+          $destination = Join-Path $env:RUNNER_TEMP 'capnproto'
+          Invoke-WebRequest -Uri $match.Value -OutFile $archive
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $tools = Join-Path $destination "capnproto-tools-win32-$version"
+          if (-not (Test-Path (Join-Path $tools 'capnp.exe'))) { throw "Cap'n Proto $version archive is missing capnp.exe." }
+          Add-Content -Path $env:GITHUB_PATH -Value $tools
+          & (Join-Path $tools 'capnp.exe') --version
+
+      - name: Record Apple build tools
+        if: runner.os == 'macOS'
+        run: |
+          {
+            xcodebuild -version
+            xcrun swift --version
+            xcrun --sdk macosx --show-sdk-version
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Install Cap'n Proto compiler on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew install capnp
+          capnp --version
+
+      - name: Install Linux desktop build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm libclang-dev pkg-config capnproto libdbus-1-dev \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev \
+            libayatana-appindicator3-dev librsvg2-dev libssl-dev
+      - name: Use LLVM for the Linux target link
+        if: runner.os == 'Linux'
+        run: |
+          {
+            echo "CC=clang"
+            echo "AR=llvm-ar"
+            echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang"
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=clang"
+          } >> "$GITHUB_ENV"
+          # No host-side equivalent here. `CARGO_HOST_RUSTFLAGS` was set on this
+          # step and did nothing: cargo ignores it unless the `host-config`
+          # feature is on, and `-Zhost-config` is no longer an option at all
+          # (cargo 1.101.0-nightly). Verified by rebuilding a host unit with
+          # `CARGO_HOST_RUSTFLAGS='--definitely-not-a-real-flag'` — a build that
+          # must fail if the flag were reaching rustc — and watching it succeed,
+          # while the same value in `RUSTFLAGS` failed immediately. Host units
+          # (build scripts, proc macros) therefore link with the default linker.
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 'latest'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Record application pepper provisioning state
+        shell: bash
+        run: |
+          set -euo pipefail
+          pepper=''
+          if [[ -n "${PO_APP_PEPPER:-}" ]]; then
+            pepper="$PO_APP_PEPPER"
+          elif [[ -f .env ]]; then
+            while IFS= read -r line || [[ -n "$line" ]]; do
+              key="${line%%=*}"
+              key="${key#"${key%%[![:space:]]*}"}"
+              key="${key%"${key##*[![:space:]]}"}"
+              if [[ "$key" == 'PO_APP_PEPPER' ]]; then
+                value="${line#*=}"
+                value="${value%"${value##*[![:space:]]}"}"
+                value="${value#\"}"; value="${value%\"}"
+                value="${value#\'}"; value="${value%\'}"
+                pepper="$value"
+                break
+              fi
+            done < .env
+          fi
+
+          if [[ -n "$pepper" ]]; then
+            printf '%s' "$pepper" | node -e '
+              let data = "";
+              process.stdin.setEncoding("utf8");
+              process.stdin.on("data", (chunk) => { data += chunk; });
+              process.stdin.on("end", () => {
+                const value = data.trim();
+                const decoded = /^[A-Za-z0-9+/]+={0,2}$/.test(value)
+                  ? Buffer.from(value, "base64")
+                  : Buffer.alloc(0);
+                const canonical = decoded.length > 0
+                  && (decoded.toString("base64") === value
+                    || decoded.toString("base64").replace(/=+$/, "") === value.replace(/=+$/, ""));
+                if (!canonical) {
+                  console.error("PO_APP_PEPPER is set but is not valid non-empty base64.");
+                  process.exit(1);
+                }
+              });
+            '
+            status=provisioned
+          else
+            status=unprovisioned
+          fi
+
+          echo "PO_PEPPER_STATUS=$status" >> "$GITHUB_ENV"
+          {
+            echo "Application pepper: $status"
+            if [[ "$status" == 'unprovisioned' ]]; then
+              echo "Artifact is unprovisioned: no application pepper was compiled in."
+            else
+              echo "Artifact was compiled with a supplied application pepper."
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Compile the locked stylesheet
+        run: |
+          npm ci --no-audit --no-fund
+          ./node_modules/.bin/tailwindcss --input tailwind.css --output assets/tailwind.css --minify
+
+      - name: Build the optimized application
+        timeout-minutes: 90
+        run: |
+          # The universal flags and the per-target CPU baseline live in
+          # .cargo/config.toml. A `RUSTFLAGS` env var would REPLACE both, so
+          # the only override here is the Linux-only lld link argument, which
+          # joins the config's own flags instead of replacing them.
+          # `--verbose` prints every rustc invocation, so the archive step
+          # records the baseline that actually reached the compiler instead of
+          # restating what the config is supposed to contribute.
+          build_log="$RUNNER_TEMP/cargo-build.log"
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            cargo build --locked --release --bin po --features desktop --target '${{ matrix.target }}' --verbose \
+              --config 'target."cfg(target_os = \"linux\")".rustflags=["-Clink-arg=-fuse-ld=lld"]' 2>&1 | tee "$build_log"
+          else
+            cargo build --locked --release --bin po --features desktop --target '${{ matrix.target }}' --verbose 2>&1 | tee "$build_log"
+          fi
+
+      - name: Build dx from the exact locked Dioxus revision
+        if: runner.os == 'Windows'
+        timeout-minutes: 60
+        # The build tool must run on the runner, not require the app's Oryon baseline.
+        # RUSTFLAGS replaces every config rustflags entry, which is what this
+        # step wants: the CLI is a host build, so no per-target baseline applies.
+        env:
+          RUSTFLAGS: "--cfg tokio_unstable -Zunstable-options --jobs-frontend=4"
+          CARGO_TARGET_DIR: ${{ runner.temp }}/dioxus-cli-target
+        run: |
+          revision="$(sed -n 's|^source = "git+https://github.com/debanjanbasu/dioxus\.git?branch=main#\([0-9a-f]\{40\}\)"$|\1|p' Cargo.lock | sort -u)"
+          [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "ERROR: expected one shared locked revision for Dioxus and Manganis" >&2
+            exit 1
+          }
+          cargo install --locked --root "$RUNNER_TEMP/dioxus-cli" \
+            --git https://github.com/debanjanbasu/dioxus.git --rev "$revision" dioxus-cli
+          dx_bin="$RUNNER_TEMP/dioxus-cli/bin/dx.exe"
+          version="$("$dx_bin" --version)"
+          [[ "$version" == *"${revision:0:7}"* ]] || {
+            echo "ERROR: installed dx does not report the locked revision: $version" >&2
+            exit 1
+          }
+          echo "$version" >> "$GITHUB_STEP_SUMMARY"
+          echo "DX_BIN=$dx_bin" >> "$GITHUB_ENV"
+
+      # The locked Tailwind release only ships a Windows x64 standalone; ARM uses x64 emulation until upstream provides ARM64.
+      - name: Use the locked Tailwind CLI for Windows packaging
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(node -p "require('./package-lock.json').packages['node_modules/@tailwindcss/cli'].version")"
+          gh release download "v$version" --repo tailwindlabs/tailwindcss \
+            --pattern tailwindcss-windows-x64.exe --dir "$RUNNER_TEMP/tailwind"
+          TAILWIND_BIN="$RUNNER_TEMP/tailwind/tailwindcss-windows-x64.exe" \
+            bash scripts/dx-tailwind-link.sh
+
+      - name: Bundle the Windows NSIS installer
+        if: runner.os == 'Windows'
+        timeout-minutes: 90
+        env:
+          # dx assembles RUSTFLAGS from .cargo/config.toml itself and prints the
+          # assembled value only at trace level. Recording the baseline from
+          # dx's own output (rather than trusting that it reproduces the
+          # cargo-build.log flags) makes the provenance line describe the build
+          # that actually ships: on Windows that is dx's cargo output, not the
+          # earlier direct `cargo build` exe.
+          DIOXUS_LOG: trace
+        run: |
+          mkdir -p target/release-artifacts
+          "$DX_BIN" bundle --platform desktop --release --locked \
+            --target '${{ matrix.target }}' --features desktop --package-types nsis \
+            2>&1 | tee "$RUNNER_TEMP/dx-bundle.log"
+          installer="$(find target/dx -type f -name '*-setup.exe')"
+          [[ -n "$installer" && -s "$installer" && "$installer" != *$'\n'* ]] || {
+            echo "ERROR: expected exactly one nonempty NSIS installer" >&2
+            exit 1
+          }
+          cp "$installer" 'target/release-artifacts/po-${{ matrix.target }}-setup.exe'
+
+      # Runs after packaging so it verifies and archives the payload that
+      # actually ships. On Windows that is dx's own cargo output, which is what
+      # the installer wraps and the only build dx stamps with the icon and
+      # version resources; the bare `cargo build` exe has none of them. The
+      # installer itself stays unverified: NSIS emits a 32-bit PE stub, which
+      # the target's architecture check is right to reject.
+      - name: Verify and archive the payload that ships, without launching it
+        run: |
+          if [[ "$RUNNER_OS" == 'Windows' ]]; then
+            app_dir='target/dx/po/release/windows/app'
+          else
+            app_dir='target/${{ matrix.target }}/release'
+          fi
+          mkdir -p target/release-artifacts
+          node scripts/verify-native-artifact.ts '${{ matrix.target }}' "$app_dir/${{ matrix.binary }}" \
+            > 'target/release-artifacts/po-${{ matrix.target }}.json'
+          tar -czf 'target/release-artifacts/po-${{ matrix.target }}.tar.gz' \
+            -C "$app_dir" '${{ matrix.binary }}'
+          # Provenance for the baselines in .cargo/config.toml: the flags below
+          # are the ones this target's rustc invocations really carried. On
+          # Windows the payload is dx's own build, so the source of truth is
+          # dx's assembled RUSTFLAGS line from the bundle step; the assertion
+          # that it carries the same -C target-(cpu|feature) set as the direct
+          # cargo build is what makes the record true for the shipped binary
+          # rather than merely consistent between two builds.
+          cpu_flags="$(grep -oE -- '-C target-(cpu|feature)=[^ ]*' "$RUNNER_TEMP/cargo-build.log" | sort -u | tr '\n' ' ')"
+          if [[ "$RUNNER_OS" == 'Windows' && -f "$RUNNER_TEMP/dx-bundle.log" ]]; then
+            dx_flags="$(grep -oE -- '-C target-(cpu|feature)=[^ ]*' "$RUNNER_TEMP/dx-bundle.log" | sort -u | tr '\n' ' ')"
+            [[ "$dx_flags" == *"$cpu_flags"* ]] || {
+              echo "ERROR: dx-assembled RUSTFLAGS is missing the config baseline" >&2
+              echo "  cargo: $cpu_flags" >&2
+              echo "  dx:    $dx_flags" >&2
+              exit 1
+            }
+            cpu_flags="$dx_flags"
+          fi
+          if [[ -z "$cpu_flags" ]]; then
+            echo 'ERROR: no -C target-cpu=/-C target-feature= flag reached rustc' >&2
+            exit 1
+          fi
+          {
+            echo "Compile/package verification only; no runtime or PGO validation."
+            if [[ "$PO_PEPPER_STATUS" == 'unprovisioned' ]]; then
+              echo "Unprovisioned artifact: no production pepper or signing material was supplied."
+            fi
+            echo "Linux/macOS archives are raw binaries, not asset-complete app bundles."
+            echo "Commit: $GITHUB_SHA"
+            echo "Toolchain: $RUSTUP_TOOLCHAIN"
+            echo "Target: ${{ matrix.target }}"
+            echo "Verified payload: $app_dir/${{ matrix.binary }}"
+            echo "Rust CPU flags: $cpu_flags"
+            echo "Application pepper: $PO_PEPPER_STATUS"
+            if [[ "$PO_PEPPER_STATUS" == 'unprovisioned' ]]; then
+              echo "Application pepper provisioning: unprovisioned (no pepper compiled in)."
+            else
+              echo "Application pepper provisioning: provisioned from the supplied value."
+            fi
+            rustc --version --verbose
+            cargo --version
+          } > 'target/release-artifacts/po-${{ matrix.target }}-build.txt'
+          cat 'target/release-artifacts/po-${{ matrix.target }}.json' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Ensure the build did not rewrite tracked inputs
+        run: git diff --exit-code
+
+      - name: Upload verified build artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: po-${{ matrix.target }}-release-build
+          path: target/release-artifacts/*
+          if-no-files-found: error
+          retention-days: 30
+
+  # The only job that signs anything, and the only place a keystore exists: R8
+  # minifies the DEX and the APK is signed with the release environment's key, so
+  # it is installable on a device. The signing material is written from secrets
+  # into the gitignored `target/` directory for the length of the build, and the
+  # `[bundle.android]` section that points dx at it is appended to Dioxus.toml in
+  # the same step — none of it is ever committed, and none of it is in the tree
+  # locally. dx selects `assembleRelease` only when that section is present and
+  # the build is a release one, which is why the APK below is the first one this
+  # repository produces that is not a gradle *debug* variant.
+  #
+  # Setup mirrors the android leg of e2e.yml: ARM64 runner so the NDK's
+  # *-android37-clang wrapper matches the host, the image's preinstalled JDK 21
+  # and NDK, and the locked dx from scripts/ci-setup-dx.sh.
+  android-release:
+    name: Release (aarch64-linux-android apk)
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 180
+    environment: release
+    env:
+      PO_APP_PEPPER: ${{ secrets.PO_APP_PEPPER }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the repository Rust toolchain
+        run: bash scripts/ci-setup-rust.sh --target aarch64-linux-android
+
+      - name: Install Android C build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm libclang-dev pkg-config capnproto
+          capnp --version
+
+      - name: Select the preinstalled JDK and NDK
+        run: |
+          # Gradle accepts JDK 17-27 only, and the image's default JDK may be
+          # newer, so pin 21 (exported per architecture as JAVA_HOME_21_ARM64).
+          # NDK r30 is the first that ships the *-android37-clang wrapper dx
+          # demands; r29 stops at 35.
+          echo "JAVA_HOME=${JAVA_HOME_21_ARM64:-$JAVA_HOME_21_X64}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          java -version
+          ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/ndk"
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 'latest'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Restore the locked Dioxus CLI
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.ci-bin
+          key: dx-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build or reuse the locked Dioxus CLI
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/dioxus-cli-target
+        run: bash scripts/ci-setup-dx.sh
+
+      - name: Compile the locked stylesheet
+        run: |
+          npm ci --no-audit --no-fund
+          ./node_modules/.bin/tailwindcss --input tailwind.css --output assets/tailwind.css --minify
+
+      - name: Record application pepper provisioning state
+        # The strict non-empty-base64 check lives in the desktop job; this leg
+        # only records whether a pepper was supplied for the APK's build.
+        run: |
+          if [[ -n "${PO_APP_PEPPER:-}" ]]; then status=provisioned; else status=unprovisioned; fi
+          echo "Application pepper: $status" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Provision release signing, run time only
+        env:
+          PO_ANDROID_KEYSTORE_BASE64: ${{ secrets.PO_ANDROID_KEYSTORE_BASE64 }}
+          PO_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.PO_ANDROID_KEYSTORE_PASSWORD }}
+          PO_ANDROID_KEY_ALIAS: ${{ secrets.PO_ANDROID_KEY_ALIAS }}
+          PO_ANDROID_KEY_PASSWORD: ${{ secrets.PO_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # `jks_file` cannot be absolute: dx embeds it in the generated Gradle
+          # project concatenated onto a `../..` chain back to the crate root, so
+          # an absolute path is resolved *inside* the repository. `target/` is
+          # gitignored and discarded with the runner.
+          printf '%s' "$PO_ANDROID_KEYSTORE_BASE64" | base64 -d > target/po-release.jks
+          chmod 600 target/po-release.jks
+          cp Dioxus.toml "$RUNNER_TEMP/Dioxus.toml"
+          {
+            echo ''
+            echo '[bundle.android]'
+            echo 'jks_file = "target/po-release.jks"'
+            echo "jks_password = \"$PO_ANDROID_KEYSTORE_PASSWORD\""
+            echo "key_alias = \"$PO_ANDROID_KEY_ALIAS\""
+            echo "key_password = \"$PO_ANDROID_KEY_PASSWORD\""
+          } >> Dioxus.toml
+
+      - name: Build the signed release APK
+        timeout-minutes: 90
+        run: dx build --release --locked --platform android
+
+      - name: Verify the APK is minified, non-debuggable and signed
+        run: |
+          set -euo pipefail
+          apk="$(find target/dx -type f -name 'app-release.apk')"
+          [[ -n "$apk" && -s "$apk" && "$apk" != *$'\n'* ]] || {
+            echo "::error::expected exactly one nonempty app-release.apk — without [bundle.android] dx falls back to assembleDebug" >&2
+            exit 1
+          }
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          "$build_tools/aapt2" dump xmltree --file AndroidManifest.xml "$apk" > "$RUNNER_TEMP/manifest.txt"
+          if grep -q 'android:debuggable(0x0101000f)=true' "$RUNNER_TEMP/manifest.txt"; then
+            echo "::error::$apk is debuggable — that is the assembleDebug variant" >&2
+            exit 1
+          fi
+          "$build_tools/apksigner" verify --print-certs "$apk"
+          {
+            echo "Signed APK: $apk ($(stat -c%s "$apk") bytes)"
+            unzip -l "$apk" | grep -E 'classes[0-9]*[.]dex|resources[.]arsc' || true
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove the signing material and restore the config
+        if: always()
+        run: |
+          rm -f target/po-release.jks
+          if [[ -f "$RUNNER_TEMP/Dioxus.toml" ]]; then cp "$RUNNER_TEMP/Dioxus.toml" Dioxus.toml; fi
+
+      - name: Ensure the build did not rewrite tracked inputs
+        run: git diff --exit-code
+
+      - name: Collect the signed APK
+        run: |
+          mkdir -p target/release-artifacts
+          cp "$(find target/dx -type f -name 'app-release.apk')" \
+            target/release-artifacts/po-aarch64-linux-android-release.apk
+          ls -l target/release-artifacts
+
+      - name: Upload the signed APK
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: po-aarch64-linux-android-release-build
+          path: target/release-artifacts/*
+          if-no-files-found: error
+          retention-days: 30
+
+  # Each matrix leg passes or fails on its own (`fail-fast: false`), so a run
+  # that published two of the five targets looks the same to anyone downloading
+  # the artifacts as a complete one. This is the only place that asserts the set.
+  artifact-set:
+    name: Artifact set completeness
+    needs:
+      - release-build
+      - android-release
+    if: always()
+    runs-on: ubuntu-26.04
+    permissions:
+      actions: read
+    steps:
+      - name: Assert every target published a build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The names below mirror the release-build matrix plus the android
+          # job; a target added there without being added here fails this check
+          # rather than silently widening the gap.
+          published="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
+            --paginate --jq '.artifacts[].name' | grep -- '-release-build$' | sort || true)"
+          missing=0
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc aarch64-linux-android; do
+            if ! grep -qx "po-$target-release-build" <<<"$published"; then
+              echo "ERROR: no artifact po-$target-release-build in this run" >&2
+              missing=1
+            fi
+          done
+          if [[ "$missing" == '1' ]]; then
+            echo "Published: ${published//$'\n'/ }" >&2
+            exit 1
+          fi
+          echo "All six target artifacts are present." | tee -a "$GITHUB_STEP_SUMMARY"

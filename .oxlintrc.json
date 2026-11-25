@@ -1,0 +1,60 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "options": {
+    "typeAware": true,
+    "typeCheck": true
+  },
+  "plugins": [
+    "typescript",
+    "import",
+    "promise",
+    "node"
+  ],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "pedantic": "error",
+    "perf": "error"
+  },
+  "rules": {
+    "import/no-unassigned-import": [
+      "error",
+      {
+        "allow": [
+          "**/*.css"
+        ]
+      }
+    ]
+  },
+  "env": {
+    "node": true,
+    "es2026": true
+  },
+  "overrides": [
+    {
+      "files": [
+        "test/**",
+        "scripts/**"
+      ],
+      "rules": {
+        "typescript/prefer-readonly-parameter-types": "off"
+      }
+    },
+    {
+      "files": [
+        "test/scenarios/**"
+      ],
+      "rules": {
+        "eslint/max-lines-per-function": "off"
+      }
+    }
+  ],
+  "ignorePatterns": [
+    "node_modules",
+    "target",
+    "test/runs",
+    "landing/.astro",
+    "landing/dist",
+    "**/*.d.ts"
+  ]
+}

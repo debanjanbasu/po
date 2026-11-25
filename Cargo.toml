@@ -1,0 +1,273 @@
+[package]
+name = "po"
+version = "0.1.0"
+authors = ["Debanjan Basu <debanjanbasu2006@gmail.com>"]
+edition = "2024"
+description = "A local-first, decentralized, peer-to-peer, distributed, agentic, reactive, ai platform"
+keywords = [
+    "local-first",
+    "decentralized",
+    "peer-to-peer",
+    "distributed",
+    "agentic",
+    "reactive",
+    "ai",
+]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# Keep the app framework and asset crate on the maintained fork used by `dx`.
+# `default-features = false` drops dioxus' default `devtools` feature, which
+# pulls dioxus-devtools + subsecond (libloading/memfd/memmap2) into every
+# shipped binary for a feature src/ never calls. Local `dx serve` hot-patch
+# still gets it via the crate's own `devtools` feature below.
+dioxus = { git = "https://github.com/debanjanbasu/dioxus.git", branch = "main", default-features = false, features = [
+    "lib",
+    "launch",
+    "logger",
+    "router",
+] }
+manganis = { git = "https://github.com/debanjanbasu/dioxus.git", branch = "main" }
+veilid-core = { git = "https://gitlab.com/debanjanbasu/veilid.git", branch = "main", default-features = false, features = ["app-lifecycle"] }
+recapn = { git = "https://github.com/cloudflare/recapn" }
+automerge = "0.12"
+autosurgeon = "0.14"
+# Deterministic scoped keypair derivation (same version veilid-core uses).
+ed25519-dalek = { version = "3", default-features = false, features = ["fast", "zeroize"] }
+qrcode = { version = "0.14", default-features = false, features = ["image"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+rqrr = { version = "0.11", default-features = false }
+# True-LRU cache. Note: rqrr pins lru 0.18, so 0.19 here is a *second* copy of
+# the crate in the build — the comment that used to claim otherwise was wrong.
+# 0.19 is kept for the newer API; dedupe by moving rqrr's pin when it allows it.
+lru = { version = "0.19", features = ["nightly"] }
+base64 = "0.23"
+anyhow = "1"
+thiserror = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "wasmbind"] }
+totp-rs = { version = "6", default-features = false, features = ["std", "otpauth", "zeroize"] }
+bytes = "1"
+futures-util = "0.3"
+# OS randomness for message-ID entropy (wasm_js feature added in the wasm32 section).
+getrandom = "0.4"
+hex = "0.4"
+zeroize = "1"
+# Already compiled into every target (dioxus-core/dioxus-document and veilid-core
+# depend on it), so declaring it directly adds no build cost — and the native
+# share sheet stops hand-rolling JSON escaping/payload assembly.
+serde_json = "1"
+# Also already in every target's graph (dioxus-router, url, totp-rs): replaces
+# the hand-rolled percent-encoding in platform/share_urls.rs.
+percent-encoding = "2"
+# Fixed-seed non-cryptographic hashing for the message dedup key: foldhash is
+# already compiled into every target (hashbrown's default hasher), so the
+# direct declaration adds no build, and its `FixedState::with_seed` is what
+# lets the two 64-bit lanes of `msg_id_dedup_key` be const-seeded.
+foldhash = "0.2"
+
+[build-dependencies]
+anyhow = "1"
+serde_json = "1"
+recapnc = { git = "https://github.com/cloudflare/recapn" }
+# No `fat-lto` here: it makes the build-script's C compile emit LLVM bitcode
+# objects, and a GNU ld/lld without an LTO plugin cannot link them — CI's
+# Web-lint job failed exactly there (`libzstd_sys-*.rlib: file format not
+# recognized`). The native target section below keeps `fat-lto`, so LTO still
+# applies to the shipped compression path; only the build-time dictionary
+# trainer loses it. `zdict_builder` stays for the dictionary-training API.
+zstd = { version = "0.14", default-features = false, features = ["zdict_builder"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "time",
+    "sync",
+    "macros",
+    "parking_lot",
+] }
+# Direct subscriber init (instead of dioxus::logger::init) so veilid-core's
+# network state-machine chatter can be capped at WARN. Already in the tree
+# transitively via dioxus-logger — no new build weight.
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# `zstdmt` compiles in multithreaded compression; it is inert until a call
+# site sets `CParameter::NbWorkers(n)` — see docs/compression.md.
+zstd = { version = "0.14", default-features = false, features = ["fat-lto", "zdict_builder", "zstdmt"] }
+# Rust tooling invokes Cargo without a platform feature; keep the native Veilid
+# runtime available so rust-analyzer/default `cargo check` remains usable.
+veilid-core = { git = "https://gitlab.com/debanjanbasu/veilid.git", branch = "main", default-features = false, features = ["enable-crypto-vld0", "rt-tokio", "backtrace", "app-lifecycle"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+v4l = "0.14"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", features = [
+    "Security_Credentials_UI",
+    "Graphics_Imaging",
+    "Media_Capture",
+    "Storage_Streams",
+] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22.4"
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+zstd = { version = "0.14", default-features = false, features = ["fat-lto", "zdict_builder"] }
+tokio = { version = "1", features = ["sync", "macros"] }
+getrandom = { version = "0.4", features = ["wasm_js"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Blob",
+    "BlobPropertyBag",
+    "CanvasRenderingContext2d",
+    "Document",
+    "Element",
+    "EventTarget",
+    "File",
+    "FilePropertyBag",
+    "HtmlCanvasElement",
+    "HtmlDocument",
+    "HtmlDialogElement",
+    "HtmlElement",
+    "HtmlTextAreaElement",
+    "HtmlVideoElement",
+    "ImageData",
+    "MediaDevices",
+    "MediaStream",
+    "MediaStreamConstraints",
+    "MediaStreamTrack",
+    "Navigator",
+    "ShareData",
+    "Storage",
+    "Url",
+    "Window",
+] }
+
+[lints.rust]
+unsafe_code = "deny"
+# Measured: exactly 2 sites, both in the Routable derive's generated
+# navigation code (`src/router/routes.rs:14,26` — rustc reports "originates in
+# the derive macro Routable"). Nothing in hand-written code triggers it; the
+# real fix belongs in the fork's route macro, not here.
+unreachable_code = "allow"
+
+[lints.clippy]
+nursery = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+string_slice = "deny"
+# Measured: 6 sites, all "type `&[u8]` is not volatile-compatible" at *our* call
+# sites (`main.rs:39-43`, `components/shared/page_not_found.rs:6`) — the volatile
+# access lives in Veilid's cryptographic generics, which monomorphise into this
+# binary, so the warning is attributed to code we do not own. `src/` contains no
+# `volatile` access of its own (the last one, `models/user/session_crypto.rs`'s
+# `write_volatile`, was removed with the code that needed it).
+volatile_composites = "allow"
+# Client-only Dioxus app: futures run on single-threaded runtime, Send not required
+future_not_send = "allow"
+# Measured: 83 sites, 18-38 KB each, concentrated in `veilid/change_dispatcher.rs`
+# and `user/watcher/*` — the async paths that carry Veilid mailbox types. Boxing
+# them would add an allocation per call on the hottest sync path to satisfy a
+# pedantic size heuristic, so the futures stay by value.
+large_futures = "allow"
+# Measured: 48 sites, every one rustc attributes to the `Props` derive ("originates
+# in the derive macro Props"). The uninhabited enums are that derive's per-field
+# error markers, which already carry `#[allow(dead_code, …)]` lists of their own —
+# so the fix is adding `clippy::empty_enums` to those lists in the fork's
+# `core-macro/src/props/`, not annotating 48 items here.
+empty_enums = "allow"
+
+[features]
+default = []
+# Hot-reload/devtools for local `dx serve` only — never enabled by CI, release,
+# or a distributed build. `dx serve` runs pass `--features devtools`.
+devtools = ["dioxus/devtools"]
+web = ["dioxus/web", "veilid-core/default-wasm"]
+desktop = ["dioxus/desktop"]
+mobile = ["dioxus/mobile"]
+aimd-dht = ["veilid-core/aimd-dht"]
+veilid-stats = ["veilid-core/stats"]
+# Tandem-harness seams (`src/config.rs`'s `e2e` module): environment-driven
+# instance isolation, pairing credentials, and event marker lines. Explicit and
+# opt-in, for the harness's release-profile builds only — never part of a normal
+# build, and a distributed build never enables it.
+e2e-seams = []
+
+[profile.dev]
+opt-level = 2
+# immediate-abort skips panic hooks/formatting entirely (gated by
+# `panic-immediate-abort` in .cargo/config.toml; works with build-std).
+panic = "immediate-abort"
+
+[profile.dev.package."*"]
+opt-level = 3
+
+# Build scripts and proc macros (host-side) at O3: rsx! / serde-derive
+# expansion runs on every incremental check. One-time rebuild cascade the
+# first build after setting this.
+[profile.dev.build-override]
+opt-level = 3
+
+# Huge generated API surfaces that are mostly unused — let rustc skip
+# eagerly compiling uncalled items (gated by `profile-hint-mostly-unused`).
+[profile.dev.package.web-sys]
+hint-mostly-unused = true
+
+[profile.dev.package.windows]
+hint-mostly-unused = true
+
+# Build scripts and proc macros (host-side) at O3, mirroring [profile.dev].
+# Measured on the release unit graph (`cargo --unit-graph`, desktop feature,
+# aarch64-apple-darwin): 203 host units — 77 build scripts, 34 proc-macros,
+# 92 host libs — otherwise sit at opt-level 0, leaving rsx!/serde/capnp codegen
+# unoptimized. Host-only: the shipped artifact is untouched. One-time rebuild
+# cascade the first build after setting this.
+[profile.release.build-override]
+opt-level = 3
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "immediate-abort"
+strip = "symbols"
+# Sanitize all local filesystem paths out of distributed binaries.
+trim-paths = "all"
+# Do NOT add -Zlocation-detail=none here (it was here until 2026-11-03).
+# That flag makes every `Location::caller()` return the SAME location
+# (`<redacted>:0:0`), and Dioxus keys each GlobalSignal's registry entry by
+# its caller location. With all locations identical, every global signal in
+# the app (22 of them, 19 distinct types) collapses into one registry slot:
+# resolving a signal of a different type evicts the previous one, so the
+# globals ping-pong against each other and reactivity breaks. The symptom was
+# the app hanging forever on the startup splash — the session phase never
+# reached the router. Reproduced on rustc 1.101.0-nightly (2026-11-01) on
+# both web and macOS release builds; removing the flag restores the login
+# screen.
+#
+# The cost is panic-location strings (file:line:col statics) in release
+# binaries. `trim-paths = "all"` still sanitizes absolute paths, so no
+# filesystem layout leaks.
+#
+# Do NOT add -Zfmt-debug=none here either: profile rustflags also compile
+# build scripts, and codegen that formats with {:?} (e.g. bosion in
+# veilid-core) then emits empty string literals — broken generated code.
+
+# Web release profile. dx names it `wasm-release` and resolves its `strip`
+# setting from THIS file (not from its own --config overrides), so the web
+# profile has to be declared here.
+#
+# `strip = "none"`: wasm-bindgen reads the `__wasm_bindgen_unstable` custom
+# section out of the linked module to find its shims. dx strips the module
+# itself with `rustc-objcopy --strip-all` BEFORE wasm-bindgen runs, and since
+# LLVM 23 that removes custom sections — wasm-bindgen then fails with "the
+# `__wasm_bindgen_unstable` custom section is missing". wasm-opt does the size
+# work afterwards; native targets keep the stripped binaries.
+[profile.wasm-release]
+inherits = "release"
+strip = "none"
+opt-level = "s"
+
+

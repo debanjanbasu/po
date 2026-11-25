@@ -1,0 +1,10 @@
+@import "tailwindcss" source(none);
+@import "./shared/theme.css";
+
+/* Class sources are explicit: auto-detection from the repo root would also
+   scan `landing/` and `docs/`, shipping their classes in every app build. */
+@source "./src/**/*.{rs,html,css}";
+@source "./shared/**/*.json";
+
+/* Import our custom project deviations */
+@import "./overrides.css";

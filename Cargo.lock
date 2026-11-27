@@ -3593,6 +3593,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lru"
+version = "0.19.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4e2a1b977b42ee8b53a2a4adbd1183431c493f1d1960b7ccd893e2f0b9407ba"
+dependencies = [
+ "hashbrown 0.17.2",
+]
+
+[[package]]
 name = "lz4_flex"
 version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4571,7 +4580,7 @@ dependencies = [
  "image",
  "jni 0.22.4",
  "js-sys",
- "lru",
+ "lru 0.19.2",
  "manganis",
  "percent-encoding",
  "qrcode",
@@ -5037,7 +5046,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d084c50c5cfa397a081850da329566c8667b0b6c4e81da16abff1fef27de93b"
 dependencies = [
  "g2p",
- "lru",
+ "lru 0.18.5",
 ]
 
 [[package]]

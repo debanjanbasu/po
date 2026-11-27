@@ -46,7 +46,7 @@ rqrr = { version = "0.11", default-features = false }
 # pulls in — no second lru in the build. The used API (new/put/get/pop_lru)
 # is identical across 0.18/0.19, and the `nightly` feature was never needed
 # (no hashbrown-typed API is used).
-lru = "0.18"
+lru = "0.19"
 base64 = "0.23"
 anyhow = "1"
 thiserror = "2"

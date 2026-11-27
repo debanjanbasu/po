@@ -1,0 +1,52 @@
+version: 2
+# No allow/ignore filters: every dependency and major, minor, and patch update
+# is eligible. Security updates remain enabled independently of this schedule.
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    target-branch: main
+    open-pull-requests-limit: 100
+    schedule:
+      interval: daily
+
+  - package-ecosystem: npm
+    directory: /
+    target-branch: main
+    open-pull-requests-limit: 100
+    schedule:
+      interval: daily
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: main
+    open-pull-requests-limit: 100
+    schedule:
+      interval: daily
+
+  - package-ecosystem: swift
+    directory: /native/apple
+    target-branch: main
+    open-pull-requests-limit: 100
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gradle
+    directory: /native/android/biometric
+    target-branch: main
+    open-pull-requests-limit: 100
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gradle
+    directory: /native/android/qrscanner
+    target-branch: main
+    open-pull-requests-limit: 100
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gradle
+    directory: /native/android/share
+    target-branch: main
+    open-pull-requests-limit: 100
+    schedule:
+      interval: weekly

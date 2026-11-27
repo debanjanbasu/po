@@ -34,3 +34,6 @@ native/android/**/.gradle/
 # Tandem e2e run evidence (logs, screenshots, result.json)
 /test/runs/
 
+# Local repository-analysis scratch output
+/graphify-out/
+

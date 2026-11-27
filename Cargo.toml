@@ -39,7 +39,7 @@ ed25519-dalek = { version = "3", default-features = false, features = ["fast", "
 # behind it (qrcode-0.14.1 `src/render/image.rs:1` `#![cfg(feature = "image")]`),
 # and `platform/qr.rs` renders through `Renderer<Luma<u8>>`. It does NOT pull a
 # second `image` — the crate unifies with our direct `image` dep below.
-qrcode = { version = "0.14", default-features = false, features = ["image"] }
+qrcode = { version = "0.15", default-features = false, features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 rqrr = { version = "0.11", default-features = false }
 # True-LRU cache, pinned to 0.18 so it is the *same* copy rqrr 0.11 already

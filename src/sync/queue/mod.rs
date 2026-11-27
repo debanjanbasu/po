@@ -13,7 +13,7 @@ mod failure;
 use std::{
     collections::{HashMap, HashSet, hash_map::Entry},
     sync::{
-        LazyLock, Mutex,
+        Arc, LazyLock, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
@@ -45,7 +45,9 @@ use crate::{
 
 // ── Deleted-account tombstones ───────────────────────────────────────────────
 
-static DELETED_ACCOUNT_TOMBSTONES: LazyLock<Mutex<HashSet<String>>> =
+// `Arc<str>` keys: callers hold `Arc<str>` account IDs (op identity keys), so a
+// mark costs one refcount, not a fresh allocation (clone-avoidance convention).
+static DELETED_ACCOUNT_TOMBSTONES: LazyLock<Mutex<HashSet<Arc<str>>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
 pub fn is_account_deleted(account_id: &str) -> bool {
@@ -58,7 +60,7 @@ pub fn mark_account_deleted(account_id: &str) {
     if account_id.is_empty() {
         return;
     }
-    recover_poison(DELETED_ACCOUNT_TOMBSTONES.lock()).insert(account_id.to_string());
+    recover_poison(DELETED_ACCOUNT_TOMBSTONES.lock()).insert(Arc::from(account_id));
 }
 
 /// Clear a deleted-account tombstone when that exact account snapshot is

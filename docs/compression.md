@@ -109,9 +109,9 @@ The `DictionaryRegistry` is a global singleton behind standard-library read/writ
 
 **Key behaviors:**
 
-- Trained dictionaries are keyed by content identity. Persisted rows in `po_dicts` are immutable content-addressed blobs (`structured.vb3:<digest>`); numeric dictionary identities and the old `structured.v1` format are not read or migrated.
-- Holds up to **8 hot dictionary versions** in memory (`MAX_DICT_VERSIONS`) as `PreparedDict` entries (`Arc<[u8]>` bytes + pre-parsed `dict_id`). When exceeded, the oldest in-memory version is evicted in insertion order; historical content-addressed blobs remain in persistent `po_dicts` storage.
-- Startup hashes the embedded `STRUCTURED_ZDICT`, stores its `PreparedDict` under its content identity, and loads the active content-only pointer from `active_dictionary`. After Veilid is available, `reload_from_tablestore()`—guarded by `DICTIONARIES_READY`—completes before dependent local I/O; older persisted content versions are lazy-loaded on demand.
+- Trained dictionaries are keyed by content identity. Persisted rows in `po_dicts` are immutable content-addressed blobs named with the zstd-vanilla-dictionary identity family (`structured.vb3:<digest>`); `vb3` names zstd's vanilla-dictionary format tag, not an app schema revision.
+- Holds up to **8 hot dictionary entries** in memory (`MAX_DICT_VERSIONS`) as `PreparedDict` entries (`Arc<[u8]>` bytes + pre-parsed `dict_id`). When exceeded, the oldest entry is evicted in insertion order; content-addressed blobs remain in persistent `po_dicts` storage.
+- Startup hashes the embedded `STRUCTURED_ZDICT`, stores its `PreparedDict` under its content identity, and loads the active content-only pointer from `active_dictionary`. After Veilid is available, `reload_from_tablestore()`—guarded by `DICTIONARIES_READY`—completes before dependent local I/O; other persisted dictionary identities are lazy-loaded on demand.
 - Thread-safe reads/writes use the registry helpers. Compressor/decompressor contexts are pooled by `DictionaryId` (`CODEC_POOLS`, `MAX_IDLE_CONTEXTS_PER_POOL = 4` per `DictionaryId`), with all compressors operating at `ZSTD_LEVEL = 12`.
 
 ## Compression Flow
@@ -402,7 +402,7 @@ c.set_parameter(CParameter::NbWorkers(workers))?; // requires the `zstdmt` cargo
 
 ## Encrypted Backup Format (`src/storage/backup.rs`)
 
-Backups (Settings → Data & Backups) use plain zstd frames independently of the DHT codec — no dictionaries or custom zstd framing. Inside the AEAD ciphertext the section/entry layout is length-prefixed (u32 LE lengths, strings via `push_str`) and is written/read only through the shared `helpers::framing` module. The POBK header version selects the backup format and is authenticated for v2 and v3.
+Backups (Settings → Data & Backups) use plain zstd frames independently of the DHT codec — no dictionaries or custom zstd framing. Inside the AEAD ciphertext the section/entry layout is length-prefixed (u32 LE lengths, strings via `push_str`) and is written/read only through the shared `helpers::framing` module. `BACKUP_FORMAT_VERSION = 1` selects the initial backup format, and the version is authenticated as AEAD associated data.
 
 ```
 [4B magic "POBK"][4B version u32 LE][nonce-prefixed AEAD ciphertext]
@@ -410,13 +410,11 @@ Backups (Settings → Data & Backups) use plain zstd frames independently of the
 
 | Version | Payload inside AEAD ciphertext | Header authenticated? |
 |---------|-------------------------------------|----------------------|
-| v1 | Historical raw section payload (uncompressed) — unsupported | No |
-| v2 | zstd-compressed payload; account-agnostic DHT key — unsupported | Yes |
-| v3 | zstd-compressed payload; account-bound DHT key — current | Yes |
+| v1 | zstd-compressed payload; account-bound DHT key | Yes |
 
-Compress-then-encrypt: zstd runs before AEAD; encrypted bytes do not compress. For v3, the 8-byte plaintext header (`magic ‖ version`) is AEAD associated data, so changing the version fails authentication. Import bounds section/item counts before allocation and rejects duplicate sections, duplicate KV keys, and trailing bytes.
+Compress-then-encrypt: zstd runs before AEAD; encrypted bytes do not compress. The 8-byte plaintext header (`magic ‖ version`) is AEAD associated data, so changing the version fails authentication. Import bounds section/item counts before allocation and rejects duplicate sections, duplicate KV keys, and trailing bytes.
 
-Import accepts **v3 only**. This release does not migrate v1 or v2 backups; use a compatible older build to read and re-export them rather than editing version bytes.
+Import accepts **v1 only**; no other backup version exists.
 
 Constants live in `config::backup`:
 

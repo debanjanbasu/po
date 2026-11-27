@@ -64,7 +64,7 @@ export async function run(ctx: RunContext, surfaces: Surface[]): Promise<void> {
   const openAccount = async (): Promise<void> => {
     await dom(peerId, [{ waitFor: ['#po-main-dock', BUDGET] }]);
     await dom(peerId, [
-      { click: 'a[href="/account"]' },
+      { click: '#po-dock-Account' },
       { waitFor: ['#theme-option-dark', BUDGET] },
     ]);
   };

@@ -4,8 +4,16 @@
 [test/README.md](../../test/README.md)) on GitHub-hosted runners. The harness itself is
 verified locally; the runner configurations are being brought up by manual dispatch
 (`workflow_dispatch` only, on purpose: macOS minutes bill at $0.062/min on this private
-repo — Linux x64 $0.006, Linux arm64 $0.005. Add a `pull_request`/`schedule` trigger for
-`web` only, once it is green twice).
+repo — Linux x64 $0.006, Linux arm64 $0.005).
+
+**Exact PR-gate criterion:** `web` becomes eligible only after **two consecutive green
+`main` runs**, meaning two consecutive completed `workflow_dispatch` runs of `e2e.yml` on
+the `main` branch in which the `Web tandem (ARM64)` job succeeds. A failed or cancelled
+`web` job in a `main` run resets the count to zero; local runs and runs on other branches
+do not count. Only after those two runs should the workflow add a `pull_request` trigger
+and the branch protection rule require `Web tandem (ARM64)`. The `web` job has no
+`continue-on-error`, so its failure will fail that future PR gate. There is deliberately
+no `pull_request` trigger yet; `apple` and `android` remain non-gating.
 
 ## Fixed on the runner
 
@@ -45,9 +53,8 @@ finished **success**, the first time any of these configurations ran:
 
 The four defects that had to be fixed to get there, in the order they surfaced, are in
 [Fixed on the runner](#fixed-on-the-runner) — each one failed **all three** jobs, so each
-cost a dispatch. The fifth was the pepper: without it `web` ran all 14 scenarios and
-passed only `smoke`, because every other scenario creates an account and signup derives its
-keys from the pepper.
+cost a dispatch. (A fifth, a missing build-time pepper that signup derived its keys from,
+has since been removed entirely: key derivation no longer needs any build-time secret.)
 
 **Android is the one job still unverified in CI.** It now targets an ARM64 runner and image
 (see below); the local surface is exercised on this machine's own arm64 AVD.
@@ -64,6 +71,12 @@ non-Play-Store arm64 image for API 37.2 — Play **services** are what the QR sc
 needed for install-time module download. An earlier LTS arm64 image is the fallback if
 `/dev/kvm` ever disappears again; the job checks for it up front rather than degrading to
 full QEMU emulation.
+
+The Android job uses one emulator for two serial, disjoint partitions from the
+registry-derived catalog: `smoke` runs alone as the fail-fast partition, then every other
+scenario runs once in the remaining partition. A smoke failure skips the remainder; the
+remaining partition collects its scenario failures before failing the job. There are no
+parallel emulators or duplicated scenario runs.
 
 ## Verified locally (2026-11-08) — the web catalog
 
@@ -90,7 +103,7 @@ pairing payload, PIN and password from their launch environment (`PO_E2E_PAIR_*`
 
 | Job | Runner | State | What to fix before trusting it |
 |---|---|---|---|
-| `web` | ARM64 Ubuntu (see the workflow) | green on the runner (run [42418495166](https://github.com/debanjanbasu/po/actions/runs/42418495166), 2026-11-07) and locally, 2026-11-08 | Nothing in the job itself: apt clang/lld building the wasm target and Chromium running on the ARM64 image are both confirmed by that run. What remains is the second green run the workflow header asks for before `web` earns a `pull_request`/`schedule` trigger |
+| `web` | ARM64 Ubuntu (see the workflow) | green on the runner (run [42418495166](https://github.com/debanjanbasu/po/actions/runs/42418495166), 2026-11-07) and locally, 2026-11-08 | Nothing in the job itself: apt clang/lld building the wasm target and Chromium running on the ARM64 image are both confirmed by that run. Before it gates PRs, it must meet the exact criterion above: two consecutive `workflow_dispatch` runs on `main` with this job green |
 | `apple` | ARM64 macOS/Xcode image (see the workflow) | green on the runner for `S1` on `web` + `macos` + `ios-sim` (same run) | The simulator is launched and then idled — `S1` pairs `web` ↔ `macos` only, one joiner per run (test/README.md § one joiner per run) — and the `S18` LAN-locality step came after that run, so a windowless runner has not exercised it. A headless `simctl` boot and the `iPhone 18 Pro` device name are confirmed by the green `S1` |
 | `android` | ARM64 Ubuntu (see the workflow) | not dispatched since the ARM64 rewrite; the surface runs locally (`S1` and `QR` on `web,android` PASS, in `test/runs/`) | The rewrite as a whole, and `adb`/`input text` against a *headless* AVD. The job needs `/dev/kvm` and checks for it up front — without it the arm64 AVD would run under full QEMU emulation |
 

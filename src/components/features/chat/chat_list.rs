@@ -14,7 +14,7 @@ use crate::{
         session_flow::retry_pending_contact,
     },
     components::shared::{
-        CenteredPage, FeedbackKind, FormFeedback, format_local_ymdhm_from_millis,
+        CenteredPage, FeedbackKind, FormFeedback, RetryButton, format_local_ymdhm_from_millis,
     },
     router::Route,
     session::{
@@ -433,15 +433,13 @@ pub fn ChatList() -> Element {
                         message: err.to_string(),
                         compact: true,
                     }
-                    button {
-                        class: "btn btn-xs btn-ghost",
-                        r#type: "button",
+                    RetryButton {
+                        class: "btn-xs",
                         disabled: loading(),
-                        onclick: move |_| {
+                        onclick: move |()| {
                             contacts_resource.restart();
                             conversations_resource.restart();
                         },
-                        "Retry"
                     }
                 }
             }

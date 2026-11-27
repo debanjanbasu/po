@@ -16,10 +16,6 @@
 # Rust ICE dumps
 rustc-ice-*.txt
 
-# Local environment overrides
-.env
-.env.local
-.env.*.local
 
 # Signing material — never committed. CI writes the android keystore into the
 # already-ignored target/ at run time; this catches an accidental copy to the

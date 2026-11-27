@@ -28,9 +28,10 @@
 //! Instead, [`mutate_user`] provides equivalent concurrency safety (load →
 //! lock → mutate → save) for the bespoke User storage path.
 //!
-//! Passwords are hashed via Veilid's crypto API with an app-level pepper. The
-//! hash is then used to derive a shared secret that encrypts/decrypts the
-//! user's Veilid `KeyPair` using AEAD.
+//! Passwords are hashed via Veilid's crypto API (Argon2id, salted with the
+//! account ID). The hash is then used to derive a shared secret under a
+//! constant domain key that encrypts/decrypts the user's Veilid `KeyPair`
+//! using AEAD — no build-time secret is involved.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -131,7 +132,7 @@ pub async fn apply_pending_admission_effects(user: &User, guard: &SessionGuard) 
     if !guard.is_current() {
         return Ok(false);
     }
-    pairing::apply_pending_device_login(user, guard).await
+    Box::pin(pairing::apply_pending_device_login(user, guard)).await
 }
 
 /// Starts the session-scoped services for a fully admitted user.

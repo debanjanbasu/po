@@ -6,12 +6,13 @@
 //! [remaining: nonce-prefixed AEAD ciphertext]
 //! ```
 //!
-//! - **v3**: zstd-compressed payload; AEAD header binding and account-bound
-//!   v2 DHT-secret derivation. Export writes and import accepts v3 only.
+//! - **v1 (initial)**: zstd-compressed payload; AEAD header binding and
+//!   account-bound DHT-secret derivation. Export writes and import accept
+//!   only this version.
 //!
 //! Backup encryption uses the session's account-bound `dht_secret` (password-derived
-//! via Argon2 + app pepper). Export is zero-prompt (key already in memory). Import
-//! requires the active account ID and the password used when exporting.
+//! via Argon2 over the account ID). Export is zero-prompt (key already in memory).
+//! Import requires the active account ID and the password used when exporting.
 //!
 //! Section payload:
 //! ```text
@@ -45,16 +46,18 @@ use crate::{
         async_utils::spawn_blocking,
         capnp::capnp_u32,
         encryption::{
-            PasswordHashForm, crypto_system_sync, decrypt_with_nonce_aad,
-            derive_dht_secret_from_password, encrypt_with_nonce_aad,
+            crypto_system_sync, decrypt_with_nonce_aad, derive_dht_secret_from_password,
+            encrypt_with_nonce_aad,
         },
         framing,
     },
 };
 
 const MAGIC: &[u8; 4] = b"POBK";
-/// v3: zstd-compressed payload and account-bound KDF.
-const VERSION_V3: u32 = 3;
+/// zstd-compressed payload and account-bound KDF (initial format).
+/// Backup container format version. This is the initial version — the app
+/// is unreleased, so there is no history to carry; the header AAD binds it.
+const BACKUP_FORMAT_VERSION: u32 = 1;
 
 /// User-facing import failure categories. Attached to the `anyhow` chain so
 /// the UI can `downcast_ref` instead of string-matching error text. The
@@ -240,9 +243,11 @@ impl<'a> Reader<'a> {
     }
 
     fn str(&mut self, what: &str) -> Result<&'a str> {
-        let len = self.u32(what)? as usize;
-        str::from_utf8(self.take(len, what)?)
-            .with_context(|| format!("Invalid UTF-8 in backup data ({what})"))
+        // One bounds-check implementation shared with the write side
+        // (`framing::push_str`) and every other length-prefixed reader.
+        let (payload, end) = framing::read_u32_len_prefixed(self.data, self.offset, what)?;
+        self.offset = end;
+        str::from_utf8(payload).with_context(|| format!("Invalid UTF-8 in backup data ({what})"))
     }
 
     const fn remaining(&self) -> usize {
@@ -262,7 +267,7 @@ impl<'a> Reader<'a> {
 /// Produces an encrypted backup file from the given sections.
 ///
 /// Uses the session's pre-derived `dht_secret` — no password prompt needed.
-/// The payload is zstd-compressed before encryption (format v3); payloads at
+/// The payload is zstd-compressed before encryption; payloads at
 /// or above [`config::backup::MT_THRESHOLD_BYTES`] use multithreaded zstd.
 ///
 /// Refuses a payload this platform could not open again
@@ -289,14 +294,19 @@ pub async fn export_backup(secret: &SharedSecret, sections: Vec<BackupSection>) 
         move || {
             let compressed = Zeroizing::new(compress_payload(&payload)?);
             let cs = crypto_system_sync()?;
-            encrypt_with_nonce_aad(&compressed, &secret, &cs, Some(&header_aad(VERSION_V3)))
+            encrypt_with_nonce_aad(
+                &compressed,
+                &secret,
+                &cs,
+                Some(&header_aad(BACKUP_FORMAT_VERSION)),
+            )
         }
     })
     .await??;
 
     let mut out = Vec::with_capacity(4 + 4 + ciphertext.len());
     out.extend_from_slice(MAGIC);
-    out.extend_from_slice(&VERSION_V3.to_le_bytes());
+    out.extend_from_slice(&BACKUP_FORMAT_VERSION.to_le_bytes());
     out.extend(ciphertext);
     Ok(out)
 }
@@ -312,40 +322,28 @@ pub async fn import_backup(
 ) -> Result<Vec<(String, Vec<u8>)>> {
     let ciphertext = parse_header(file)?;
 
-    // The backup format does not record which salt form its account hashed the
-    // password with, and nothing else on disk does either: the header decrypt
-    // is the oracle. It has to be — a derivation succeeds under *any* form, so
-    // picking on the derivation alone would always take the newest one and
-    // reject every backup exported before the account-ID salt as a wrong
-    // password. Try each form, newest first, and keep the one that opens the
-    // file; a legacy file simply pays one extra Argon2 and AEAD attempt.
-    let mut plaintext = None;
-    for form in PasswordHashForm::NEWEST_FIRST {
-        let secret = derive_dht_secret_from_password(password, account_id, form).await?;
-        let opened = spawn_blocking({
-            let ciphertext = ciphertext.to_vec();
-            move || -> Result<Option<Zeroizing<Vec<u8>>>> {
-                let cs = crypto_system_sync()?;
-                let Ok(decrypted) = decrypt_with_nonce_aad(
-                    &ciphertext,
-                    &secret,
-                    &cs,
-                    Some(&header_aad(VERSION_V3)),
-                ) else {
-                    // Wrong form (or wrong password): the next form's attempt,
-                    // or the caller's WrongPassword below, is the verdict.
-                    return Ok(None);
-                };
-                Ok(Some(Zeroizing::new(decompress_payload(&decrypted)?)))
-            }
-        })
-        .await??;
-        if let Some(opened) = opened {
-            plaintext = Some(opened);
-            break;
+    // One salt form exists (account-ID-salted), so one derivation attempt:
+    // pre-release there are no legacy backups to fall back to.
+    let secret = derive_dht_secret_from_password(password, account_id).await?;
+    let opened = spawn_blocking({
+        let ciphertext = ciphertext.to_vec();
+        move || -> Result<Option<Zeroizing<Vec<u8>>>> {
+            let cs = crypto_system_sync()?;
+            let Ok(decrypted) = decrypt_with_nonce_aad(
+                &ciphertext,
+                &secret,
+                &cs,
+                Some(&header_aad(BACKUP_FORMAT_VERSION)),
+            ) else {
+                // Wrong password (the only remaining failure): the caller's
+                // WrongPassword verdict below applies.
+                return Ok(None);
+            };
+            Ok(Some(Zeroizing::new(decompress_payload(&decrypted)?)))
         }
-    }
-    let plaintext = plaintext.context(ImportError::WrongPassword)?;
+    })
+    .await??;
+    let plaintext = opened.context(ImportError::WrongPassword)?;
 
     decode_payload(&plaintext)
 }
@@ -359,7 +357,7 @@ fn parse_header(file: &[u8]) -> Result<&[u8]> {
         bail!(ImportError::InvalidFile);
     }
     let version = u32::from_le_bytes(file[4..8].try_into()?);
-    if version != VERSION_V3 {
+    if version != BACKUP_FORMAT_VERSION {
         bail!(ImportError::UnsupportedVersion(version));
     }
     Ok(&file[8..])
@@ -383,7 +381,7 @@ fn compress_payload(payload: &[u8]) -> Result<Vec<u8>> {
     Ok(compressor.compress(payload)?)
 }
 
-/// Decompresses a v2 backup payload, bounding allocation by the frame's
+/// Decompresses a backup payload, bounding allocation by the frame's
 /// declared content size (always present — export compresses in one shot).
 fn decompress_payload(data: &[u8]) -> Result<Vec<u8>> {
     let content_size = get_frame_content_size(data)
@@ -466,7 +464,9 @@ fn encoded_len(sections: &[BackupSection]) -> u64 {
 
 fn encode_payload(sections: &[BackupSection]) -> Vec<u8> {
     let mut buf = Vec::new();
-    framing::push_u32_len_prefixed(&mut buf, &capnp_u32(sections.len()).to_le_bytes());
+    // The count is a bare u32 field, not a length-prefixed payload — matching
+    // decode_payload's raw `r.u32("section count")` read.
+    buf.extend_from_slice(&capnp_u32(sections.len()).to_le_bytes());
     for section in sections {
         let id_bytes = section.model_id.as_bytes();
         buf.push(u8::try_from(id_bytes.len()).unwrap_or(u8::MAX));

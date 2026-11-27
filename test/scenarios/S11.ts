@@ -73,9 +73,9 @@ export async function run(ctx: RunContext, surfaces: Surface[]): Promise<void> {
   // The change form has no submit button: it auto-submits once all three
   // fields are valid.
   await dom(peer, [
-    { click: '#po-main-dock a[href="/account"]' },
-    { waitFor: ['a[href="/account/security"]', BUDGET] },
-    { click: 'a[href="/account/security"]' },
+    { click: '#po-dock-Account' },
+    { waitFor: ['#settings-link-security', BUDGET] },
+    { click: '#settings-link-security' },
     { waitFor: ['#security-password-current', BUDGET] },
     { fill: ['#security-password-current', PASSWORD] },
     { fill: ['#security-password-new', NEW_PASSWORD] },
@@ -93,7 +93,7 @@ export async function run(ctx: RunContext, surfaces: Surface[]): Promise<void> {
 
   // ── Log out: the login screen is where a password can be checked ────────
   await dom(peer, [
-    { click: '#po-main-dock a[href="/account"]' },
+    { click: '#po-dock-Account' },
     { waitFor: ['button:has-text("Log out")', BUDGET] },
     { click: 'button:has-text("Log out")' },
     { waitFor: ['#login-username-input', BUDGET] },

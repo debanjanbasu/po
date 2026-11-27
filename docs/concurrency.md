@@ -378,7 +378,7 @@ The Veilid API handle (`src/veilid/core/mod.rs`) is a `tokio::sync::OnceCell<Vei
 
 The compression dictionary store (`src/compression/codec/registry.rs`) coordinates initialization and activation with two statics:
 
-- `DICTIONARIES_READY` (`tokio::sync::OnceCell<()>`) — one-time bootstrap that must complete before dependent local I/O; restores embedded v1 and loads the active content identity from TableDB.
+- `DICTIONARIES_READY` (`tokio::sync::OnceCell<()>`) — one-time bootstrap that must complete before dependent local I/O; restores the embedded structured dictionary and loads the active content identity from TableDB.
 - `DICTIONARY_UPDATE_LOCK` (`Mutex<()>`) — serializes dictionary/registry activation; every add/activate/swap flows through `registry.rs` helpers, never ad-hoc registry writes.
 
 Owned dictionary snapshots — `(DictionaryId, Arc<[u8]>)` pairs from `structured_snapshot()` — survive `.await` points and cache eviction because decode paths hold the `Arc`, not a registry guard.
@@ -420,6 +420,7 @@ let keys = chat::manager::watched_conversation_keys();
 | `now_epoch_secs()` | `u64` seconds since epoch | `now_epoch_millis() / 1000` |
 | `sleep_ms(ms)` | async sleep | `setTimeout` on WASM, `tokio::time::sleep` on native |
 | `timeout(duration, future)` | `Result<T, IoError>` | `tokio::select!` with `js_sleep` on WASM, `tokio::time::timeout` on native |
+| `exponential_backoff_ms(attempt_index, base_ms, cap_ms)` | `u64` delay | one shared, saturating `base_ms * 2^attempt_index` formula; a cap, when given, bounds it. Schedules keep their base/cap/attempt indexing at the call site |
 
 On WASM, `timeout` races the operation against `js_sleep` with `tokio::select!`. A completed operation wins when both are ready; timer-registration errors propagate as `IoError` rather than being hidden as a timeout.
 
@@ -525,7 +526,10 @@ A clock site is legitimate when no observable event can exist:
   the loop they guard (`VALUE_RETRY_DELAY_MS`, `OPEN_RETRY_DELAY_MS`,
   `PUBLISH_VERIFY_BACKOFF_MS`, `PUBLISH_RETRY_BASE_MS`,
   `RENEWAL_DEDUP_INTERVAL_MS`, `BEACON_WRITE_RETRY_WAITS_MS`,
-  `TRAIN_RETRY_FLOOR_MS`) — never inline a duration at the call site.
+  `TRAIN_RETRY_FLOOR_MS`) — never inline a duration at the call site. The delay
+  itself comes from
+  `helpers::async_utils::exponential_backoff_ms`; do not duplicate its
+  shift/multiply formula.
 - **A settling window for state the app cannot observe.** DHT propagation is the
   standing case: the e2e pairing retry waits because no event proves the
   anchor's identity record has replicated.
@@ -544,3 +548,6 @@ A clock site is legitimate when no observable event can exist:
 4. `spawn_blocking` is for CPU-bound work; see [Spawn Patterns](#spawn-patterns).
    File system work on an async path (a directory walk, a recursive delete)
    belongs there too.
+5. `clippy::large_futures` is enforced. When a future that crosses a hot-path
+   boundary is large, box it at that boundary (or `Box::pin` its await site) —
+   do not add a crate-wide `large_futures` allowance.

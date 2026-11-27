@@ -19,9 +19,8 @@ use crate::{
         record, storage,
         watcher::handle_conversation_change_loaded,
     },
-    config,
     helpers::{
-        async_utils::{now_epoch_millis, sleep_ms},
+        async_utils::{now_epoch_millis, retry_after_session_stable_delay},
         spawn,
         store_lock::recover_poison,
     },
@@ -282,8 +281,7 @@ fn handle_new_data_signal(signal: PeerSignal) {
             // signal can outrun the sender's DHT write reaching the nodes we
             // read from. One delayed re-pull, only while the session holds.
             if !changed && guard.is_current() {
-                sleep_ms(config::nudge::RETRY_DELAY_MS).await;
-                if guard.is_current() {
+                retry_after_session_stable_delay(guard, || async {
                     handle_conversation_change_loaded(
                         ctx,
                         &conv_key_str,
@@ -292,8 +290,9 @@ fn handle_new_data_signal(signal: PeerSignal) {
                         None,
                         guard,
                     )
-                    .await;
-                }
+                    .await
+                })
+                .await;
             }
         },
     );

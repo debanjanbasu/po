@@ -150,7 +150,7 @@ pub fn PinGate() -> Element {
             }
             match result {
                 Ok(PinVerifyResult::Verified) => {
-                    if let Err(error) = complete_admission(pending).await {
+                    if let Err(error) = Box::pin(complete_admission(pending)).await {
                         warn!("Failed to finalize admission after PIN verification: {error}");
                         apply_pin_state(
                             Some(PinError::Internal),

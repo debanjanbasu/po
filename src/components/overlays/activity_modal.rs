@@ -7,9 +7,12 @@ use crate::{
     models::pending_operation::PendingOperation,
     nonfatal,
     storage::{
-        background_errors::BACKGROUND_ERRORS, hydration_status::HYDRATION_STATUS,
-        pairing_sync_status::PAIRING_SYNC_STATUS, sync_status::SYNC_STATUS,
-        training_status::TRAINING_STATUS, upgrade_status::UPGRADE_STATUS,
+        background_errors::BACKGROUND_ERRORS,
+        hydration_status::HYDRATION_STATUS,
+        pairing_sync_status::PAIRING_SYNC_STATUS,
+        sync_status::{PENDING_OPS_REVISION, SYNC_STATUS},
+        training_status::TRAINING_STATUS,
+        upgrade_status::UPGRADE_STATUS,
     },
     sync::pending_ops,
 };
@@ -30,7 +33,11 @@ pub fn ActivityModal() -> Element {
     let queue_data = use_resource(move || {
         let open = modal_open();
         if open {
+            // Both subscriptions: the phase for open/close transitions, the
+            // revision for same-count mutations (feed squash, retry) that
+            // leave `SYNC_STATUS` untouched but change row contents.
             let _phase = SYNC_STATUS();
+            let _revision = PENDING_OPS_REVISION();
         }
         async move {
             if !open {

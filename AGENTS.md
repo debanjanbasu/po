@@ -138,9 +138,11 @@ All internal imports use canonical paths defined by `pub use` statements in each
 
 ### Linting (all JS/TS)
 
-`npm run lint` (oxlint + `oxlint-tsgolint`, config in `.oxlintrc.json`) must pass
-for every `.ts`, `.tsx`, `.js`, `.mjs` and `.astro` file — the harness, `scripts/`
-and the landing page alike. `npm run lint:fix` applies the mechanical fixes.
+`npm run check` must pass for every `.ts`, `.tsx`, `.js`, `.mjs` and `.astro`
+file — the harness, `scripts/` and the landing page alike. It runs `npm run lint`
+(oxlint + `oxlint-tsgolint`, config in `.oxlintrc.json`) followed by
+`npm run typecheck` (`tsc --noEmit`). `npm run lint:fix` applies mechanical lint
+fixes only; it does not replace type checking.
 
 - **Fix the code, never silence the rule.** A new `oxlint-disable` needs a
   one-line reason naming the requirement it protects, and it must be as narrow
@@ -230,13 +232,16 @@ This project enforces very strict clippy lints. All new code must comply:
   each carries its measured rationale as a comment beside it — read there, never
   a copy. They are crate-wide because the alternative is not narrower: the two
   macro-generated-code lints fire on derive output, `manganis` drops attributes
-  written on `extern` declarations, and the rest describe chosen architecture
-  (single-threaded runtime, Veilid's future sizes). Fixing them properly means
-  patching the fork, not adding inline `#[allow]`s here.
+  written on `extern` declarations, and the others cover the single-threaded
+  runtime and volatile access inside Veilid's monomorphized cryptographic
+  generics. `large_futures` is enforced through `pedantic`: box large futures at
+  their boundaries or await sites rather than restoring a crate-wide allowance.
+  Fixing generated-code exceptions properly means patching the generator, not
+  adding inline `#[allow]`s here.
 
 ## Verification Policy
 
-Do not add or run tests in this pre-release codebase. Use the verification commands in [README.md § Build Verification](README.md#build-verification) and [README.md § Release Baselines](README.md#release-baselines); validate platform-truth behavior on target devices before release. Do not claim a change is verified without evidence.
+Do not add or run tests in this pre-release codebase. Use the verification commands in [README.md § Build Verification](README.md#build-verification) and [README.md § Release Baselines](README.md#release-baselines); validate platform-truth behavior on target devices before release. Do not claim a change is verified without evidence. Harness runs, when deliberately checking tandem behavior, go through `npm run e2e:locked`; see [docs/device-testing.md](docs/device-testing.md).
 
 Do not use `--locked` for local installs or builds — the repo tracks bleeding-edge git dependencies (`dioxus`/`veilid` forks) where the lock should be refreshed, not enforced. CI workflows are the exception: they pin `--locked` deliberately so a build is reproducible against the committed lockfile, and they fail the job instead of refreshing it.
 
@@ -284,6 +289,11 @@ Apply to: `save_local`, `persist_and_sync`, `open_dht_record`, `watch_dht_values
 
 `std::time::Instant` and `std::time::SystemTime::now()` **panic on WASM** (`wasm32-unknown-unknown`). Use `now_epoch_millis()`, `now_epoch_secs()`, `sleep_ms()`, and `timeout()` from `helpers/async_utils.rs` instead (see [docs/concurrency.md § Cross-Platform Time](docs/concurrency.md#cross-platform-time)). Only use `Instant` or `SystemTime::now()` inside `#[cfg(not(target_arch = "wasm32"))]` blocks.
 
+All exponential retry schedules use
+`helpers::async_utils::exponential_backoff_ms(attempt_index, base_ms, cap_ms)`;
+call sites own their attempt indexing, bases, and caps rather than duplicating
+shift/multiply formulas.
+
 # Dioxus Dependency
 Key deps are git-based: `debanjanbasu/dioxus` `main` provides `dioxus` (with `router`) and `manganis`; `debanjanbasu/veilid` `main` provides `veilid-core`; `recapn` remains upstream. See `Cargo.toml` and `Cargo.lock` for exact revisions.
 
@@ -295,9 +305,10 @@ Rust runs on the rolling channel in `rust-toolchain.toml`; run `rustup update`
 locally to refresh it. Verify `dx` against the Dioxus/Manganis Git revision in
 `Cargo.lock`, not its version string. CI uses `cargo fmt --all -- --check`; the
 locked `dx fmt --check` is mutating and is not
-an assurance check. Release verification artifacts are unprovisioned, not
-publishable releases; production pepper/signing belongs to a separate trusted
-flow. CPU baselines in `.cargo/config.toml` apply to local release bundles too.
+an assurance check. Release verification artifacts are verification-only, not
+publishable releases; production signing belongs to a separate trusted flow.
+Key derivation takes no build-time secret, so release artifacts carry no
+provisioning state. CPU baselines in `.cargo/config.toml` apply to local release bundles too.
 
 Platform features: no default (requires `--platform web`, `--platform desktop`, or
 `--platform mobile`). `web` uses Dioxus web and Veilid `default-wasm`; `desktop`
@@ -317,6 +328,10 @@ Follow current Dioxus patterns used in docs and repo examples:
 * Keep `#[component]` functions simple and use `?` in component bodies when falling through to an `ErrorBoundary`.
 * Use `asset!` and `document::Stylesheet` for styles and static assets.
 * For async data in this client-only app, prefer `use_resource` and browser/client APIs.
+* Queue phase/count readers subscribe to `SYNC_STATUS`; readers that render pending-op
+  **row contents** also subscribe to `storage::sync_status::PENDING_OPS_REVISION`.
+  `refresh_sync_status()` bumps that revision on every queue mutation, including
+  same-count replacements, so row UIs must not rely on a phase change alone.
 
 ---
 
@@ -371,6 +386,11 @@ Validators return `Option<&'static str>` where `None` = valid and `Some("hint")`
 # Serialization with recapn (Cap'n Proto)
 
 Schemas in `src/schemas/*.capnp`, compiled via `recapnc` in `build.rs`. Generated code included via `include!` from `OUT_DIR` in `src/models/mod.rs`.
+
+Generated modules self-allow `unused`/`unsafe_code`. Their only additional
+allow-list is `clippy::module_inception`, `clippy::elidable_lifetime_names`,
+`clippy::unreadable_literal`, and `clippy::use_self`; do not restore blanket
+`clippy::all`/`pedantic`/`nursery` allowances around generated code.
 
 Models use `pack`/`unpack` from `helpers/capnp.rs`. See `src/user/model.rs` for the canonical pattern. Use packed encoding for storage. Read text with `.get().as_str()?`, set with `.set_str()`.
 

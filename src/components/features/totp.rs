@@ -430,6 +430,7 @@ fn RemoveTokenConfirm(
                 }
                 button {
                     r#type: "button",
+                    id: "totp-remove-confirm",
                     class: "btn btn-sm btn-error",
                     disabled: mutating(),
                     onclick: move |_| {

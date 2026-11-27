@@ -11,7 +11,7 @@ use dioxus::{logger::tracing::warn, prelude::*};
 
 use crate::{
     chat::{feed::MessageStatus, hooks::use_chat_store, retry_message_delivery},
-    components::shared::{CenteredPage, format_local_ymdhm_from_millis},
+    components::shared::{CenteredPage, RetryButton, format_local_ymdhm_from_millis},
     config,
     global_state::network_status,
     helpers::async_utils::now_epoch_millis,
@@ -460,12 +460,10 @@ pub fn ConversationView(conversation_key: String) -> Element {
                 if let Some(err) = load_error().as_ref() {
                     div { class: "flex items-center gap-2 mt-1",
                         p { class: "text-error text-xs", role: "alert", "{err}" }
-                        button {
-                            class: "btn btn-xs btn-ghost",
-                            r#type: "button",
+                        RetryButton {
+                            class: "btn-xs",
                             disabled: local_loading() || loading_head() || history_loading(),
-                            onclick: move |_| retry_load.call(()),
-                            "Retry"
+                            onclick: move |()| retry_load.call(()),
                         }
                     }
                 }

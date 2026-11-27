@@ -80,7 +80,7 @@ impl ContactList {
     }
 }
 
-const CONTACT_SCHEMA_VERSION: u32 = 3;
+const CONTACT_SCHEMA_VERSION: u32 = 1;
 
 fn pack_contact_list(list: &ContactList) -> Result<Vec<u8>> {
     pack::<chat_capnp::ChatContactList>(|mut root| {

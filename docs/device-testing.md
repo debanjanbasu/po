@@ -23,8 +23,11 @@ Non-goals: replacing the build verification in [README.md § Build Verification]
 adding a test suite to the repo (the [verification policy](../AGENTS.md) forbids that
 pre-release), or hardware in CI — no hosted runner has the devices. `web` is the
 exception and runs in CI: it needs no hardware, so `e2e.yml` puts the whole scenario
-catalog through it while the `apple` and `android` jobs cover only the joiner path
-(`S1` / `smoke`).
+catalog through it (currently dispatch-only, fail-closed; two consecutive green main
+runs are the stated prerequisite before it becomes a required PR check), while the
+`apple` job runs S1 twice against sequential joiner pairs (`web,macos`, then
+`web,ios-sim`), and `android` runs a smoke fail-fast partition followed by every other
+Android-capable scenario on one emulator.
 
 Unit-level logic is cheap to reason about; **tandem behaviour is the risk**, so the
 harness exists to make two-plus devices observable and injectable, not to
@@ -195,7 +198,10 @@ sites own the lines.
 
 Marker **names are emitted quoted** (`event="qr"`) while field values are not
 (`conversation=…`), so a matcher written as `event=qr` misses every line;
-`test/lib/wait.ts::findMarker` accepts both. Keep the vocabulary to what a scenario
+`test/lib/wait.ts::findMarker` accepts both. Native logs may wrap marker fields in
+ANSI escapes: `wait.ts::stripAnsi` removes SGR colour codes and OSC sequences
+(hyperlinks, titles) before matching/parsing, so a matcher should read through it
+rather than trusting raw lines. Keep the vocabulary to what a scenario
 asserts, and never log payloads, PINs or passwords — the share marker's `pin`/`deep_link`
 and the pairing share URL are masked on the way into evidence
 (`test/lib/run.ts::maskSecrets`). Mask the assembled line, not the bare value:
@@ -241,20 +247,20 @@ brackets.
 | # | Scenario | Observable |
 |---|---|---|
 | smoke | launch, assert the first screen, screenshot each peer | the process is alive and reached a first screen; the surface-level sanity check |
-| S1 | A signs in (anchor), B cold + signed out, `po://pair?data=…` on B + PIN + password | `PAIRING_SYNC_STATUS` reaches ready on both; B opens the identity record and child records hydrate; no `auth.pairing` background error. The joiner's `deep_link` marker is asserted **before** the `paired` wait, because `paired` can pass on the env seams alone [dht-architecture, watch-system] |
-| S2 | B adds A via `po://chat?data=…` | `ConvRecordCreate` drains, invite signal arrives, both sides show the conversation Active [peer-signaling, sync-pipeline] |
-| S3 | A→B and B→A message, with a typing/read exchange between | sender moves queued→delivered without DLQ; receiver renders the bubble and emits `message_received` [peer-signaling] |
+| S1 | A signs in (anchor), B cold + signed out, `po://pair?data=…` on B + PIN + password | the joiner's DHT gate opens (`dht_ready`) and pairing completes (`paired`); its `deep_link` marker is asserted **before** that wait, because `paired` can pass on the env seams alone. After completion, the joiner's captured log must contain none of the known `auth.pairing` `WARN` messages (pre-pairing enqueue, pairing failure, payload generation, finalize) — a clean pairing writes no such background error [dht-architecture, watch-system] |
+| S2 | B adds A via `po://chat?data=…` | invite signal arrives (`invite_sent`/`invite_received`), both sides show the conversation Active [peer-signaling, sync-pipeline] |
+| S3 | A→B and B→A message | A→B waits for `message_sent`/`message_delivered`/`message_received`, renders the bubble, and waits for a **new** `queue_drained` counted from a pre-send baseline. B→A first counts existing B `message_sent` and A `message_received`, then requires one more of each — a bare wait would match direction 1's stale markers if direction 2 silently no-opped (typing is S15; read receipts are declined — no marker channel) [peer-signaling] |
 | S4 | B edits profile (DOB); A holds an unsaved conflicting edit | A merges via `user.identity_watch` and shows the DOB-conflict warning row [watch-system] |
-| S5 | B force-quit/airplane-mode mid-send, then relaunch | queue drains once, receiver sees one message (pending-op dedupe), no tombstone replay [sync-pipeline] |
+| S5 | B force-quit mid-send, then relaunch (the airplane-mode half is declined: it needs a LAN-denial seam that does not exist, same as S6's revoke) | queue drains once, receiver sees one message (pending-op dedupe), no tombstone replay [sync-pipeline] |
 | S7 | A trains/upgrades the zstd dictionary | B receives it via `dict_sync` and both report the same `b3:<digest>` [compression] |
-| S8 | Kill B while a thread is open, relaunch | archive/backfill recovers history, watches reconcile — pinned to `watch_reconciled record=app_state`, since the marker name alone is satisfied by any of five record sources [watch-system] |
+| S8 | Kill B while a thread is open, relaunch | archive/backfill recovers history (bubbles re-rendered post-restart); `watch_reconciled` is recorded as an observation, not asserted — a restart whose pull changes nothing emits none [watch-system] |
 | S9 | Negatives: expired payload TTL, wrong PIN (cooldown path) | each shows its own UI error/notice and writes no partial admission state |
 | S10 | TOTP: add a known base32 secret on `/totp` | the rendered code equals an independently computed RFC 6238 TOTP (HMAC-SHA1, 30 s, 6 digits); deleting the entry removes it |
 | S11 | Security: change the account password; try a wrong PIN | the new password admits, the old is refused, a wrong PIN is refused at the gate |
 | S12 | Snapshots: export a snapshot, then import/restore it | the restored state matches what was exported — the backup path, which fails silently |
 | S13 | Session: switch theme, reload; then log out and reload | the theme survives the reload; logout returns to login and a reload does not restore the session |
 | S14 | A parked invite from an unknown sender is dismissed — the decline half of the invite journey (S2 only accepts) | the parked-invite row itself — the `Dismiss` control on it — clears it, the receiver's chat list still reads "No contacts yet", and `conversation_active` never fires on either peer (counted against a pre-click baseline, after a settle window). Deliberately **not** `invite_received`: a parked invite never emits it (see the marker table), so waiting on that marker made this scenario fail exactly when the app behaved correctly |
-| S15 | B types into its composer without sending, after one seed message | the peer renders exactly one typing bubble (`#chat-messages .loading-dots`), the typist's own view renders none, the bubble is gone by the end of the app's 5 s typing expiry, and the typist's transcript still holds only the seed message |
+| S15 | B types into its composer without sending, after one seed message | the peer renders exactly one typing bubble (`#chat-messages .loading-dots`), the typist's own view renders none, the bubble is then **polled** until absent within the expiry-settle budget (the app's 5 s typing expiry is a deadline, not a fixed sleep), and the typist's transcript still holds only the seed message |
 | S16 | Import the SAME backup twice on one device: Merge, then Replace | Merge keeps a token added after the export; Replace discards it, waited for as `#totp-empty-state` — so neither "the restore did nothing" nor "Replace is a Merge" can pass, and an instant read cannot mistake a restore that is still applying for one that did nothing. Its post-export change is a TOTP token, and the seed must therefore be ≥128 bits: the screen parses through `totp_rs` (`src/components/features/totp.rs`), which refuses the 80-bit RFC 4226 example with its own validation error, so it uses S10's RFC 6238 Appendix B secret |
 | QR | the share QR round-trips | the rendered QR decodes back to the exact share URL handed to the joiner (`qr` / `qr_decode_failed`) |
 | S17 | Pair a device, then message it: the joiner pairs from the pairing alone (S1's flow), and the DOM surface's second context holds the counterpart account the conversation is with (`minPeers: 3` — the first surface takes the extra peer, `test/run.ts::planOwnership`) | `message_sent`, `message_delivered` and `queue_drained` on the counterpart, `message_received` naming the same `msg_id` on the PAIRED device — the messaging path S3 cannot reach on a surface with no typing channel. The paired device sends the invite itself (a contact deep link is its only outbound chat action: the adder's path needs no accept click, and a device with no DOM cannot press Accept), and the return direction is driven by `po://send?…` where the joiner has no typing channel — the same assertions as the DOM joiner's, refused-or-accepted by `deep_link_send` — recording a SKIP only for a surface with neither channel |
@@ -310,9 +316,12 @@ alone counts a scenario that asserted nothing as coverage; reading `skipped` doe
 **Concurrent runs are not safe.** A run rebuilds the `dx` bundle when the tree is stale and
 serves it from disk, so two runs on one tree compile into the same target directory and can
 serve each other half-written files — a flaky scenario failure rather than a build error.
-Authoring can be parallel; running goes through `test/run-locked.sh`, which serializes on a
-lock directory (`$TMPDIR/po-e2e.lock`, `LOCK_WAIT` seconds, default 900) and resolves the
-repo root from its own location so it works from any cwd.
+Authoring can be parallel; running goes through `npm run e2e:locked`
+(`test/run-locked.sh`), which serializes on a lock directory
+(`$TMPDIR/po-e2e.lock`, `LOCK_WAIT` seconds, default 900), resolves the repo
+root from its own location so it works from any cwd, and records the holder in
+the lock's `owner` file so an exhausted wait names it instead of inviting lock
+deletion.
 
 ### The `dom` op — the generic driver for feature screens
 
@@ -643,7 +652,8 @@ directory (the device build wins and clobbers the simulator one), and `dx build
 --platform ios --device` additionally demands an Xcode-managed signing identity that
 this repo deliberately does not use. The device surface therefore builds into
 `target/dx-e2e/` with `dx build --platform ios --target aarch64-apple-ios` (no
-`--device`, so dx skips signing) and signs with xtool, matching
+`--device`, so dx skips signing), runs `scripts/fix-bundle-case.sh` to inject the
+launcher icons `dx build` skips, and signs with xtool, matching
 [`scripts/ios-device-deploy.sh`](../scripts/ios-device-deploy.sh).
 
 ### iPhone: USB for the install, Wi-Fi for the run
@@ -793,9 +803,9 @@ away from xtool's cert). Do not start here.
 * **Dev-server coordinates do not reach physical devices** (script header): tandem runs
   must inject them explicitly (`--payload-url`/`-e` or `DEVICECTL_CHILD_*`) or run a
   non-hot-reload build.
-* **Stale generated env.** New shells take `JAVA_HOME` from `~/.config/po/env.sh`
-  (`$XDG_CONFIG_HOME`); a file written by an older revision of the script can pin a JDK
-  the pinned Gradle refuses (outside the range it accepts, Gradle fails to
+* **Stale shell exports.** New shells take `JAVA_HOME` from the generated startup-file
+  block (`$XDG_CONFIG_HOME`); exports written by an older revision of the script can pin a
+  JDK the pinned Gradle refuses (outside the range it accepts, Gradle fails to
   start — *"Unsupported class file major version"*). Repair: `node scripts/dx-setup.ts
   --yes`, then confirm a fresh shell reports an in-window JDK.
 * **`dx` shadowing.** `command -v dx` must resolve to `~/.cargo/bin/dx` (the revision

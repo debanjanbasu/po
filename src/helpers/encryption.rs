@@ -1,19 +1,18 @@
-//! Account-bound password hashing and the application pepper.
+//! Account-bound password hashing and key derivation.
 //!
 //! A credential hash is Argon2id over the password, salted with the account's
 //! 16-byte ID — public and deterministic, so a joining device reproduces it from
 //! the pairing payload and two accounts sharing a password never share a hash.
-//! The pepper is not a salt: it is the `derive_shared_secret` key that turns the
-//! hash into the account-bound DHT secret, so it stays unrecoverable from stored
-//! bytes. Accounts hashed before the account-ID salt keep their pepper-salted
-//! hash ([`PasswordHashForm::Pepper`]): their DHT secret derives from exactly
-//! those bytes, so re-salting them would strand everything they published.
+//! The hash is turned into the account-bound DHT secret by
+//! `derive_shared_secret(material, DHT_SECRET_DOMAIN_KEY)`: the key is a
+//! compile-time constant domain separator, not a secret. All entropy lives in
+//! the Argon2 hash, which an attacker without the password cannot compute, so
+//! no build-time secret is needed and every build of the app derives the same
+//! key for the same account.
 
 use crate::{helpers::async_utils::spawn_blocking, veilid::core::ensure_local_api};
 use anyhow::{Context as _, Error, Result, anyhow, bail};
-use base64::{Engine, engine::general_purpose::STANDARD};
 use ed25519_dalek::SigningKey;
-use std::sync::LazyLock;
 use tokio::sync::OnceCell;
 use veilid_core::{
     BareKeyPair, BarePublicKey, BareSecretKey, Crypto, CryptoSystemGuard, KeyPair, Nonce,
@@ -21,60 +20,20 @@ use veilid_core::{
 };
 use zeroize::Zeroizing;
 
-/// Returns the application pepper bytes, or an error if `PO_APP_PEPPER` was not set at build time.
-/// The pepper is expected to be base64-encoded in the environment variable.
+/// Constant domain key for the account-bound DHT secret derivation.
 ///
-/// Used as the `derive_shared_secret` key over an account's credential hash and
-/// as the pairing payload key, never as the Argon2 salt of a new account.
-pub fn app_pepper() -> Result<&'static [u8]> {
-    APP_PEPPER.as_deref().context(
-        "PO_APP_PEPPER must be set at build time, be a valid base64 string, and not be empty",
-    )
-}
-
-/// Salt form of an account's credential hash.
-///
-/// The hash is both the credential and the input to the account-bound DHT secret
-/// ([`derive_dht_secret_from_hash`]), so an account's form is fixed for life:
-/// re-salting it re-derives the DHT secret and strands every record, subkey, and
-/// backup already encrypted under the old one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PasswordHashForm {
-    /// Salt = the account's 16-byte ID. Every account created from now on.
-    AccountId,
-    /// Salt = `PO_APP_PEPPER`. Accounts created before the account-ID salt.
-    Pepper,
-}
-
-impl PasswordHashForm {
-    /// Both forms, newest first — the order a credential check should try.
-    pub const NEWEST_FIRST: [Self; 2] = [Self::AccountId, Self::Pepper];
-
-    /// The account's credential hash for `password`.
-    pub async fn hash(self, password: &str, account_id: &str) -> Result<String> {
-        match self {
-            Self::AccountId => hash_password_for_account(password, account_id).await,
-            Self::Pepper => legacy_password_hash(password).await,
-        }
-    }
-}
+/// This is a domain separator baked into the binary, not a secret: it only
+/// keeps the app's derivations in their own domain. Secrecy comes from the
+/// Argon2 credential hash in the material, which depends on the password and
+/// the account ID. The domain key is a compile-time constant (this is the
+/// initial, and only, version — the app is unreleased), identical in every
+/// build: only someone who knows the password can derive the secret.
+pub const DHT_SECRET_DOMAIN_KEY: &[u8] = b"po:dht-secret:v1:domain-key:0123456789abcdef";
 
 /// Argon2id PHC hash of `password` salted with the account ID — the credential
-/// hash, and hence the DHT-secret input, of every account created from now on.
+/// hash, and hence the DHT-secret input, of every account.
 pub async fn hash_password_for_account(password: &str, account_id: &str) -> Result<String> {
     let salt = account_id_bytes(account_id)?;
-    argon2_hash(password, &salt).await
-}
-
-/// Argon2id PHC hash of `password` salted with `PO_APP_PEPPER`.
-///
-/// Needed in exactly two places: reproducing the credential hash of an account
-/// created before the account-ID salt (its DHT secret derives from these bytes),
-/// and keying a pairing payload, whose key both devices must derive before the
-/// joining one can see the account ID. Never a stored credential for a new
-/// account — that salt is shared by every install of a build.
-pub async fn legacy_password_hash(password: &str) -> Result<String> {
-    let salt = Zeroizing::new(app_pepper()?.to_vec());
     argon2_hash(password, &salt).await
 }
 
@@ -91,15 +50,6 @@ async fn argon2_hash(password: &str, salt: &[u8]) -> Result<String> {
     })
     .await?
 }
-
-/// Lazily initialized compile-time pepper for [`app_pepper`].
-/// The pepper is stored base64-encoded in the environment and decoded at runtime.
-static APP_PEPPER: LazyLock<Option<Vec<u8>>> = LazyLock::new(|| {
-    option_env!("PO_APP_PEPPER")
-        .filter(|s| !s.is_empty())
-        .map(str::trim) // Trim whitespace/newlines that might be in the env var
-        .and_then(|s| STANDARD.decode(s).ok())
-});
 
 /// Cached API handle — kept in a static so the `VeilidComponentGuard` borrows
 /// have a stable `'static` reference. This is a separate cache from the main
@@ -163,41 +113,39 @@ pub fn account_id_string(account_id: &[u8; 16]) -> String {
 
 fn dht_secret_material(password_hash: &[u8], account_id: &[u8; 16]) -> Zeroizing<Vec<u8>> {
     let mut material = Zeroizing::new(Vec::with_capacity(
-        b"po:dht-secret:v2\0".len() + account_id.len() + password_hash.len(),
+        b"po:dht-secret:v1\0".len() + account_id.len() + password_hash.len(),
     ));
-    material.extend_from_slice(b"po:dht-secret:v2\0");
+    material.extend_from_slice(b"po:dht-secret:v1\0");
     material.extend_from_slice(account_id);
     material.extend_from_slice(password_hash);
     material
 }
 
-/// Derives the v2 account-bound DHT secret from an already-computed Argon2 hash.
+/// Derives the account-bound DHT secret from an already-computed Argon2
+/// credential hash.
 ///
-/// Unchanged across the salt change by design: the pepper stays the
-/// `derive_shared_secret` key, so every account — account-ID-salted or
-/// pepper-salted — derives the same secret it always published under.
+/// The `derive_shared_secret` key is the constant [`DHT_SECRET_DOMAIN_KEY`] —
+/// a domain separator, not a secret — so every build derives the same secret
+/// for the same account, and only the password hash (Argon2 over the password,
+/// salted with the account ID) carries entropy.
 pub async fn derive_dht_secret_from_hash(hash: &str, account_id: &str) -> Result<SharedSecret> {
     let account_id = account_id_bytes(account_id)?;
     drop(get_cached_crypto_system().await?);
-    let pepper = Zeroizing::new(app_pepper()?.to_vec());
     let hash = Zeroizing::new(hash.as_bytes().to_vec());
     spawn_blocking(move || {
         let cs = crypto_system_sync()?;
         let material = dht_secret_material(hash.as_slice(), &account_id);
-        Ok(cs.derive_shared_secret(material.as_slice(), pepper.as_slice())?)
+        Ok(cs.derive_shared_secret(material.as_slice(), DHT_SECRET_DOMAIN_KEY)?)
     })
     .await?
 }
 
-/// Derives the v2 account-bound DHT secret directly from a plaintext password,
-/// in the salt form that account was created with. Both are correct only
-/// together: the form is not recoverable from the password.
+/// Derives the account-bound DHT secret directly from a plaintext password.
 pub async fn derive_dht_secret_from_password(
     password: &str,
     account_id: &str,
-    form: PasswordHashForm,
 ) -> Result<SharedSecret> {
-    let hash = Zeroizing::new(form.hash(password, account_id).await?);
+    let hash = Zeroizing::new(hash_password_for_account(password, account_id).await?);
     derive_dht_secret_from_hash(&hash, account_id).await
 }
 

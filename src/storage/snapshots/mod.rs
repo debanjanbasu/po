@@ -41,9 +41,9 @@ pub(super) const SNAPSHOTS_COLS: u32 = 2;
 const COL_INDEX: u32 = 0;
 const COL_PAYLOAD: u32 = 1;
 
-/// Index binary format version. v1 rows (bare count+entries) load via the
-/// migration path and are rewritten as v2 on the next append/prune.
-const INDEX_FORMAT_VERSION: u8 = 2;
+/// Index binary format version. Initial version — the app is unreleased, so
+/// there is no legacy format to migrate.
+const INDEX_FORMAT_VERSION: u8 = 1;
 
 static SNAPSHOT_REVISION: GlobalSignal<u64> = Signal::global(|| 0);
 
@@ -153,7 +153,7 @@ fn next_snapshot_timestamp(entries: &[SnapshotEntry], requested: u64) -> u64 {
     })
 }
 
-// v2: [u8 version=2][u32 count LE][{timestamp u64 LE, size u32 LE}...]
+// Index: [u8 version][u32 count LE][{timestamp u64 LE, size u32 LE}...]
 fn serialize_index(entries: &[SnapshotEntry]) -> Vec<u8> {
     let mut buf = Vec::with_capacity(5 + entries.len() * 12);
     buf.push(INDEX_FORMAT_VERSION);
@@ -167,21 +167,18 @@ fn serialize_index(entries: &[SnapshotEntry]) -> Vec<u8> {
 }
 
 fn deserialize_index(bytes: &[u8]) -> Result<Vec<SnapshotEntry>> {
-    // v2: [u8 version=2][u32 LE count][rows...]. A v1 row starts with the
-    // 4-byte LE count, which collides with the v2 marker byte whenever the
-    // count's low byte is 2 (i.e. exactly two entries) — so disambiguate by
-    // total length: valid v2 framing is 1 + 4 + 12*count bytes; anything else
-    // (including the empty index, either format) parses as v1.
-    if bytes.len() >= 5 && bytes[0] == INDEX_FORMAT_VERSION {
-        let count = u32::from_le_bytes(bytes[1..5].try_into()?);
-        if bytes.len() == 5 + 12 * usize::try_from(count)? {
-            return parse_index_rows(count, &bytes[5..]);
-        }
-    }
-    let header: [u8; 4] = *bytes
-        .first_chunk::<4>()
-        .context("Snapshot index is missing its count")?;
-    parse_index_rows(u32::from_le_bytes(header), &bytes[4..])
+    // Single format: [u8 version][u32 LE count][rows...]. Older layouts (and
+    // any future one) fail the framing check below rather than guessing.
+    ensure!(
+        bytes.len() >= 5 && bytes[0] == INDEX_FORMAT_VERSION,
+        "Snapshot index has an unsupported format version"
+    );
+    let count = u32::from_le_bytes(bytes[1..5].try_into()?);
+    ensure!(
+        bytes.len() == 5 + 12 * usize::try_from(count)?,
+        "Snapshot index length does not match its declared count"
+    );
+    parse_index_rows(count, &bytes[5..])
 }
 
 fn parse_index_rows(count: u32, data: &[u8]) -> Result<Vec<SnapshotEntry>> {

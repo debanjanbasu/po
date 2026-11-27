@@ -23,7 +23,7 @@ use super::{
     shared::dict_only_sync,
 };
 
-pub async fn handle_dht_change(key: Arc<str>, change: VeilidValueChange) {
+pub async fn handle_dht_change(key: Arc<str>, change: Box<VeilidValueChange>) {
     note_sync_activity();
 
     if is_watched_conversation(&key) {
@@ -48,7 +48,7 @@ pub async fn handle_dht_change(key: Arc<str>, change: VeilidValueChange) {
         .authenticated_user()
         .is_some_and(|user| !user.dht_key().is_empty() && user.dht_key() == key.as_ref());
     if is_own_identity {
-        handle_identity_change(change, &key).await;
+        Box::pin(handle_identity_change(change, &key)).await;
     }
 }
 
@@ -63,7 +63,7 @@ async fn handle_child_change(feature: &'static str, change: &VeilidValueChange) 
 
 /// Routes an identity-record `ValueChange` by changed subkey so a pairing
 /// beacon or route update never triggers a full identity resync.
-async fn handle_identity_change(change: VeilidValueChange, change_key: &str) {
+async fn handle_identity_change(change: Box<VeilidValueChange>, change_key: &str) {
     // `count == 0` signals the watch died (expired or cancelled upstream):
     // re-arm it. With an empty subkey set it is a pure death notice — the
     // record may have changed while unwatched, so pull everything. A final
@@ -71,12 +71,12 @@ async fn handle_identity_change(change: VeilidValueChange, change_key: &str) {
     if change.count == 0 {
         user::identity_watch::reestablish().await;
         if change.subkeys.is_empty() {
-            resync_identity().await;
+            Box::pin(resync_identity()).await;
             return;
         }
     } else if change.subkeys.is_empty() {
         // Unknown scope (forced resync) — pull everything.
-        resync_identity().await;
+        Box::pin(resync_identity()).await;
         return;
     }
 
@@ -123,7 +123,7 @@ async fn handle_identity_change(change: VeilidValueChange, change_key: &str) {
         } else {
             ResyncScope::Core
         };
-        resync_with_scope(scope).await;
+        Box::pin(resync_with_scope(scope)).await;
     }
     // Dict hints run directly (not via the resync): a coalesced multi-subkey
     // event can carry core and dict subkeys in one notification.

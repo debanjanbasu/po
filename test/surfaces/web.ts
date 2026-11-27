@@ -5,13 +5,13 @@
 // WASM tracing goes to the browser console, so `Surface.logs()` is backed by
 // Playwright's console events; the pairing share is read from the QR card DOM
 // (web has no stdout for the event=share seam).
-import { accessSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import http from 'node:http';
 import { extname, join, normalize } from 'node:path';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 import { exec } from '../lib/proc.ts';
-import { isStale, E2E_SEAM_FEATURE } from '../lib/build.ts';
+import { ensureBuilt, E2E_SEAM_FEATURE } from '../lib/build.ts';
 import { surfaceShotPath } from '../lib/run.ts';
 import { readIdentityMarker, sleep, waitFor, waitForMarkerFields } from '../lib/wait.ts';
 import type { Dict, DomOp, PairingFormValues, SurfaceOptions } from '../lib/types.ts';
@@ -47,24 +47,21 @@ export async function create(
   opts: SurfaceOptions,
 ): Promise<WebSurface> {
   const buildDir = webBuildDir();
-  const manifest = join(buildDir, '..', '.manifest.json');
-  let missing = false;
-  try {
-    accessSync(manifest);
-    accessSync(join(buildDir, 'index.html'));
-  } catch {
-    missing = true;
-  }
-  // A build older than the newest source file is stale: it would silently run
-  // yesterday's code while the source moved on. Rebuild it.
-  if (missing || isStale(manifest)) {
-    runCtx.note(missing ? 'web build missing' : 'web build stale — rebuilding');
-    const res = await exec(join(process.env.HOME ?? '', '.cargo', 'bin', 'dx'), ['build', '--release', '--features', E2E_SEAM_FEATURE, '--platform', 'web'], {
-      cwd: process.cwd(),
-      timeoutMs: 3_600_000,
-    });
-    if (res.code !== 0) throw new Error(`dx build --platform web failed:\n${res.stderr}`);
-  }
+  await ensureBuilt({
+    // The HTML entry point is both the freshness artifact and the file the
+    // static server requires; a manifest without it is not a usable web build.
+    artifact: join(buildDir, 'index.html'),
+    what: 'web build',
+    note: runCtx.note.bind(runCtx),
+    hint: 'dx build --platform web produced no index.html',
+    build: async () => {
+      const res = await exec(join(process.env.HOME ?? '', '.cargo', 'bin', 'dx'), ['build', '--release', '--features', E2E_SEAM_FEATURE, '--platform', 'web'], {
+        cwd: process.cwd(),
+        timeoutMs: 3_600_000,
+      });
+      if (res.code !== 0) throw new Error(`dx build --platform web failed:\n${res.stderr}`);
+    },
+  });
 
   // Static file server: one small http server, no dependency.
   const server = await serveStatic(buildDir);
@@ -424,7 +421,7 @@ export class WebSurface {
     // Navigate in-app (the dock's Account link → "Pair New Device"): a full
     // page reload reboots the WASM app and drops the admitted session, which
     // comes back as a PIN gate instead of the share screen.
-    await page.locator('a[href="/account"]').first().click();
+    await page.locator('#po-dock-Account').first().click();
     await waitFor(async () => ((await page.getByText('Pair New Device').count()) ? 'account' : null), {
       label: 'account page',
       timeoutMs,
@@ -547,7 +544,7 @@ export class WebSurface {
   private async gotoChat(page: Page, timeoutMs: number): Promise<void> {
     // The dock's Chat entry is the stable route in; a full reload would drop
     // the admitted session into the PIN gate.
-    const dockLink = page.locator('#po-main-dock a[href="/chat"]').first();
+    const dockLink = page.locator('#po-dock-Chat').first();
     if ((await dockLink.count()) > 0) {
       await dockLink.click();
     } else {
@@ -582,6 +579,7 @@ export class WebSurface {
       peer,
       () => this.logs(peer),
       this.opts.timeoutMs,
+      true,
     );
 
     // Close the dialog so later steps can reach the chat list again.
@@ -622,7 +620,7 @@ export class WebSurface {
     // The open dialog is the observable — its QR resource re-runs when the
     // identity appears and emits `event=identity` — so wait for the marker
     // instead of guessing a delay.
-    await waitForMarkerFields(() => this.logs(peer), 'identity', timeoutMs);
+    await waitForMarkerFields(() => this.logs(peer), 'identity', timeoutMs, true);
     await input.fill(link);
     // The app auto-submits a parseable payload; the dialog closes when the
     // contact was stored. A refusal leaves it open and reports itself in the
@@ -752,13 +750,13 @@ export class WebSurface {
 
   /** Navigate in-app to Account → Profile (no reload: the session survives). */
   private async gotoProfile(page: Page, timeoutMs: number): Promise<void> {
-    const dockAccount = page.locator('#po-main-dock a[href="/account"]').first();
+    const dockAccount = page.locator('#po-dock-Account').first();
     if ((await dockAccount.count()) > 0) {
       await dockAccount.click();
     } else {
       await page.goto(new URL('/account', this.url()).toString(), { waitUntil: 'domcontentloaded' });
     }
-    const profileLink = page.locator('a[href="/account/profile"]').first();
+    const profileLink = page.locator('#settings-link-profile').first();
     await waitFor(async () => ((await profileLink.count()) > 0 ? 'account' : null), {
       label: 'account page',
       timeoutMs,
@@ -781,10 +779,10 @@ export class WebSurface {
    */
   async openPairing(peer: string, password: string, timeoutMs: number): Promise<void> {
     const page = this.peer(peer).page;
-    const accountLink = page.locator('#po-main-dock a[href="/account"]').first();
+    const accountLink = page.locator('#po-dock-Account').first();
     if ((await accountLink.count()) > 0) {
       await accountLink.click();
-      const pairLink = page.locator('a[href="/account/pair"]').first();
+      const pairLink = page.locator('#settings-link-pairing').first();
       await waitFor(async () => ((await pairLink.count()) > 0 ? 'link' : null), {
         label: 'account page',
         timeoutMs,

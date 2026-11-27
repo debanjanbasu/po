@@ -84,7 +84,7 @@ export async function run(ctx: RunContext, surfaces: Surface[]): Promise<void> {
 
   // Add the known secret and read the code the app rendered for it.
   const addToken: DomOp[] = [
-    { click: '#po-main-dock a[href="/totp"]' },
+    { click: '#po-dock-Totp' },
     { waitFor: ['#totp-uri-input', BUDGET] },
     { fill: ['#totp-uri-input', URI] },
     { waitFor: ['#totp-code-0', BUDGET] },
@@ -128,8 +128,12 @@ export async function run(ctx: RunContext, surfaces: Surface[]): Promise<void> {
   );
 
   // Remove the token and assert the entry (and its empty state) is gone.
+  // Removal is guarded by a confirm dialog (by design, like account
+  // deletion): click remove, then confirm in the dialog.
   const removeToken: DomOp[] = [
     { click: '#totp-remove-0' },
+    { waitFor: ['#totp-remove-confirm', BUDGET] },
+    { click: '#totp-remove-confirm' },
     { waitFor: ['#totp-empty-state', BUDGET] },
     { readCount: ['codes', '#totp-code-0'] },
   ];

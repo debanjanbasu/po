@@ -300,7 +300,7 @@ fn merge_pending_change(existing: &mut VeilidValueChange, change: &VeilidValueCh
     existing.value = None;
 }
 
-async fn handle_change(key: Arc<str>, change: VeilidValueChange, force_resync: bool) {
+async fn handle_change(key: Arc<str>, change: Box<VeilidValueChange>, force_resync: bool) {
     let guard = session::SessionGuard::capture();
 
     // Core committed this value locally before reporting it, so hand it to the
@@ -463,7 +463,7 @@ fn spawn_supervisor(dispatcher: Arc<DirtyChangeDispatcher>) {
             spawn(async move {
                 match job {
                     CoalescedJob::Item(key, change, force_resync) => {
-                        handle_change(Arc::clone(&key), change, force_resync).await;
+                        handle_change(Arc::clone(&key), Box::new(change), force_resync).await;
                         if recover_poison(dispatcher.state.lock()).finish_item(&key) {
                             debounce_notify(&dispatcher);
                         }

@@ -9,7 +9,11 @@ use crate::{
     user::ctx::UserCtx, veilid::core::parse_record_key,
 };
 
-use super::{PeerSignal, prepare_signal_bytes, routes::send_prepared_signal};
+use super::{
+    prepare_signal_bytes,
+    routes::send_prepared_signal,
+    wire::{PeerSignal, SignalPayload},
+};
 
 /// Parses a conversation record key together with the current user's identity
 /// key — the addressing pair every conversation-scoped signal needs.
@@ -18,6 +22,30 @@ pub fn conv_sender_keys(conv_key: &str) -> Option<(RecordKey, RecordKey)> {
     let conv = parse_record_key(conv_key).ok()?;
     let sender = UserCtx::try_current().and_then(|ctx| parse_record_key(&ctx.dht_key).ok())?;
     Some((conv, sender))
+}
+
+/// Fans an unsigned `NewData` signal to `peers` while the session captured by
+/// `guard` is still current — the one fanout the send and invite-accept paths
+/// share. No-op on a stale session or unresolvable conversation/sender keys;
+/// the durable DHT sync path still converges either way.
+pub fn fan_new_data_if_session_current(
+    guard: session::SessionGuard,
+    conv_key_str: &str,
+    peers: &[String],
+    member_subkey: u32,
+) {
+    if guard.is_current()
+        && let Some((conv_key, sender_identity)) = conv_sender_keys(conv_key_str)
+    {
+        signal_all_peers(
+            peers,
+            &PeerSignal::unsigned(SignalPayload::NewData {
+                conv_key,
+                sender_identity,
+                member_subkey,
+            }),
+        );
+    }
 }
 
 /// Sends a signal to every peer concurrently. Fire-and-forget.

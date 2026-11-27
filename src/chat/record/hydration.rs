@@ -228,9 +228,7 @@ async fn load_conversation_head_state(
     }
 
     let member_index = roster
-        .members
-        .iter()
-        .position(|member| member.identity_key == my_identity_key)
+        .my_member_index(my_identity_key, false)
         .context("Current user not present in conversation roster")?;
 
     Ok(LoadedConversationHeadState {

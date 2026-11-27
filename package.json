@@ -9,6 +9,8 @@
     "landing:build": "cd landing && astro build",
     "landing:preview": "cd landing && astro preview",
     "e2e": "node test/run.ts",
+    "e2e:locked": "bash test/run-locked.sh",
+    "check": "npm run lint && npm run typecheck",
     "lint": "oxlint --config .oxlintrc.json",
     "lint:fix": "oxlint --config .oxlintrc.json --fix",
     "typecheck": "tsc --noEmit -p tsconfig.json"
@@ -23,12 +25,12 @@
     "@tailwindcss/cli": "^4.3.5",
     "@tailwindcss/typography": "^0.5.20",
     "@tailwindcss/vite": "^4.3.5",
-    "@types/node": "^26.6.6",
-    "astro": "^7.4.11",
-    "daisyui": "^5.8.0",
-    "oxlint": "^1.93.0",
-    "oxlint-tsgolint": "^7.0.2007",
-    "playwright": "^1.65.0",
+    "@types/node": "^26.6.11",
+    "astro": "^7.4.13",
+    "daisyui": "^5.8.3",
+    "oxlint": "^1.95.0",
+    "oxlint-tsgolint": "^7.0.2009",
+    "playwright": "^1.65.1",
     "tailwindcss": "^4.3.5",
     "typescript": "^7.0.2"
   }

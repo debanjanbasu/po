@@ -103,6 +103,17 @@ impl ConversationRoster {
         self.members.push(entry);
     }
 
+    /// Index of `identity_key`'s member slot, active members only when
+    /// `require_active` — `None` when the key is absent (or inactive and
+    /// required active).
+    #[must_use]
+    pub fn my_member_index(&self, identity_key: &str, require_active: bool) -> Option<usize> {
+        self.members.iter().position(|member| {
+            member.identity_key == identity_key
+                && (!require_active || member.status == MemberStatus::Active)
+        })
+    }
+
     #[must_use]
     pub fn peer_identity_keys(&self, exclude_identity: &str) -> Vec<String> {
         self.members

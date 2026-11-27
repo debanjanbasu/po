@@ -30,11 +30,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Ensure the local .env file is not tracked by git
+      # Signing material is the one secret class this repo carries; its only
+      # copy lives outside the tree (~/.po/; .gitignore covers *.jks and
+      # *.keystore). Fail if a keystore is ever committed.
+      - name: Fail on tracked signing material
         run: |
-          if git ls-files --error-unmatch .env >/dev/null 2>&1; then
-            echo "ERROR: .env holds the local PO_APP_PEPPER secret and must not be tracked by git." >&2
-            git ls-files --error-unmatch .env >&2
+          if git ls-files -- '*.jks' '*.keystore' | grep -q .; then
+            echo "ERROR: signing material is tracked by git:" >&2
+            git ls-files -- '*.jks' '*.keystore' >&2
             exit 1
           fi
 
@@ -94,6 +97,16 @@ jobs:
       - name: Install the repository Rust toolchain
         run: bash scripts/ci-setup-rust.sh
 
+      # Cargo build/registry cache for the ~600-crate dependency graph: a warm
+      # cache turns the clippy job into a po-only recompile. Keyed per-arch
+      # (the matrix legs build different host triples) and to Cargo.lock, so a
+      # dependency bump invalidates cleanly.
+      - name: Cache Cargo build artifacts
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: ${{ matrix.arch }}
+          cache-all-crates: true
+
       - name: Install desktop C build dependencies
         run: |
           sudo apt-get update
@@ -133,6 +146,14 @@ jobs:
 
       - name: Install the repository Rust toolchain
         run: bash scripts/ci-setup-rust.sh --target wasm32-unknown-unknown
+
+      # Distinct key from the desktop legs: the wasm build is a separate graph
+      # (build-std compiles core/std for wasm32).
+      - name: Cache Cargo build artifacts
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: web-wasm32
+          cache-all-crates: true
 
       - name: Install Web C build dependencies
         run: |

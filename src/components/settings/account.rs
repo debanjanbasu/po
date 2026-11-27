@@ -61,7 +61,7 @@ pub fn Account() -> Element {
 
             // ── Settings sections ──
             SettingsCard {
-                Link { to: Route::Profile, class: "list-row",
+                Link { to: Route::Profile, class: "list-row", id: "settings-link-profile",
                     span {
                         class: "icon-[line-md--person-twotone]",
                         "aria-hidden": "true",
@@ -71,7 +71,7 @@ pub fn Account() -> Element {
                         div { "Date of Birth" }
                     }
                 }
-                Link { to: Route::Security, class: "list-row",
+                Link { to: Route::Security, class: "list-row", id: "settings-link-security",
                     span {
                         class: "icon-[line-md--security-twotone]",
                         "aria-hidden": "true",
@@ -87,7 +87,7 @@ pub fn Account() -> Element {
                         }
                     }
                 }
-                Link { to: Route::Snapshots, class: "list-row",
+                Link { to: Route::Snapshots, class: "list-row", id: "settings-link-snapshots",
                     span {
                         class: "icon-[line-md--cloud-down-twotone]",
                         "aria-hidden": "true",
@@ -97,7 +97,7 @@ pub fn Account() -> Element {
                         div { "Export · Restore · Snapshots" }
                     }
                 }
-                Link { to: Route::Pairing, class: "list-row",
+                Link { to: Route::Pairing, class: "list-row", id: "settings-link-pairing",
                     span {
                         class: "icon-[line-md--laptop-twotone]",
                         "aria-hidden": "true",

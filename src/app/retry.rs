@@ -43,10 +43,13 @@ fn retry_delay_ms(attempt: u32) -> u64 {
     if attempt <= RETRY_FAST_ATTEMPTS {
         return RETRY_FAST_DELAY_MS;
     }
-    let exp = attempt.saturating_sub(RETRY_FAST_ATTEMPTS + 1).min(10);
-    RETRY_BASE_DELAY_MS
-        .saturating_mul(1_u64 << exp)
-        .min(RETRY_MAX_DELAY_MS)
+    // Exponential tail via the shared formula; the index is the exponent past
+    // the fast window, capped at 10 to bound the shift.
+    crate::helpers::async_utils::exponential_backoff_ms(
+        attempt.saturating_sub(RETRY_FAST_ATTEMPTS + 1).min(10),
+        RETRY_BASE_DELAY_MS,
+        Some(RETRY_MAX_DELAY_MS),
+    )
 }
 
 /// Sleeps the shared backoff schedule before one retry, logging throttled

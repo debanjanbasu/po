@@ -115,7 +115,7 @@ async fn migrate_identity(
         })
         .await?;
         store::with_transaction(vec![key.clone()], |tx| async move {
-            let pointers = migrate_core(&tx, &key, old_secrets, new_secret).await?;
+            let pointers = Box::pin(migrate_core(&tx, &key, old_secrets, new_secret)).await?;
             if let Some(expected) = expected_children {
                 ensure!(
                     &pointers == expected,

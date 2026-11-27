@@ -39,15 +39,15 @@ use dioxus::desktop::{
 };
 use dioxus::prelude::*;
 
-/// Marks the builds whose window is borderless (`platform::window`), so
-/// `overrides.css` can reserve the band the page's own chrome occupies. Every
-/// other platform keeps its viewport to itself: web is inside the browser's
-/// chrome and the phones hide the system bars instead.
+/// Marks the builds whose window is borderless, so `overrides.css` can reserve
+/// the band the page's own chrome occupies. The value comes from
+/// `platform::window::BORDERLESS` (the single source of truth): `"desktop"`
+/// there, empty everywhere else.
 #[cfg(all(
     feature = "desktop",
     any(target_os = "macos", target_os = "windows", target_os = "linux")
 ))]
-const WINDOW_CHROME: &str = "desktop";
+const WINDOW_CHROME: &str = crate::platform::window::BORDERLESS;
 #[cfg(not(all(
     feature = "desktop",
     any(target_os = "macos", target_os = "windows", target_os = "linux")
@@ -128,7 +128,7 @@ pub fn App() -> Element {
 
     // Startup initialization runs in the background while routing remains live.
     use_future(move || async move {
-        run_app_init().await;
+        Box::pin(run_app_init()).await;
     });
 
     // Persist theme globally so it survives refresh before login/registration.

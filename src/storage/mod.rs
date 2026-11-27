@@ -73,9 +73,17 @@ pub mod sync_status {
 
     pub static SYNC_STATUS: GlobalSignal<SyncPhase> = Signal::global(SyncPhase::default);
 
+    /// Monotonic bump on every queue mutation (`refresh_sync_status` is the
+    /// one call all of them make). `SYNC_STATUS` only changes when the phase
+    /// changes, so a same-count replace (feed squash, dead-letter retry of a
+    /// re-enqueued op) would leave a list UI stale; readers that show row
+    /// *contents* subscribe to this revision instead of the phase.
+    pub static PENDING_OPS_REVISION: GlobalSignal<u64> = Signal::global(|| 0);
+
     pub async fn refresh_sync_status() {
         let (pending, dead) = pending_ops::queue_counts().await;
         set_if_changed(&SYNC_STATUS, SyncPhase::from_counts(pending, dead));
+        PENDING_OPS_REVISION.with_mut(|r| *r = r.wrapping_add(1));
     }
 
     pub fn mark_sync_processing_started() {

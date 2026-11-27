@@ -1,4 +1,10 @@
 [application]
+# The product is lowercase "po" on every platform. dx defaults the bundle dir
+# and the generated plist display/bundle names to PascalCase(crate_name)
+# ("Po.app"), so pin the name here: `dx build` then emits `po.app` directly and
+# scripts/fix-bundle-case.sh only has to inject icons. The custom
+# Info.*.plist / AndroidManifest.app.xml below already carry "po".
+name = "po"
 # No ios_entitlements/macos_entitlements keys: dx parses them but only signs from
 # `--apple-entitlements` / its auto-provisioning path, so a path here never reaches
 # codesign. Entitlements that are genuinely needed go under [ios.entitlements] /

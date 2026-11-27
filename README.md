@@ -35,11 +35,11 @@ brew install llvm
 cargo install \
   --git https://github.com/debanjanbasu/dioxus.git \
   --branch main dioxus-cli
-cp .env.example .env
 ```
 
-`.env` is a local-only file and stays untracked — CI fails the build if it is
-ever committed.
+Configure tools in the invoking shell (or CI) directly: for example,
+`NO_DOWNLOADS=1` tells `dx` not to fetch helper tools such as esbuild, and the
+Android chain uses `ANDROID_HOME`/`JAVA_HOME` from the shell.
 
 Dioxus and Manganis use the maintained `main` branch of
 `https://github.com/debanjanbasu/dioxus`.
@@ -94,11 +94,11 @@ never set for a distributed build, whose accessors compile to no-ops.
 ```bash
 # macOS (Apple Silicon)
 ~/.cargo/bin/dx build --release --platform macos
-./scripts/fix-bundle-case.sh target/dx/po/release/macos # normalize dx's Pascal-cased bundle dir to "po.app"
+./scripts/fix-bundle-case.sh target/dx/po/release/macos # inject the Dock icon dx build skips
 
 # iOS/iPadOS
 ~/.cargo/bin/dx build --release --platform ios
-./scripts/fix-bundle-case.sh target/dx/po/release/ios
+./scripts/fix-bundle-case.sh target/dx/po/release/ios # inject the launcher icons dx build skips
 
 # Android (generic aarch64)
 ~/.cargo/bin/dx build --release --platform android
@@ -134,8 +134,8 @@ builds do not set `RUSTFLAGS` — they add the Linux lld link argument through
 `GlobalSignal`'s registry entry by its caller location. All global signals in
 the app then collapse into one slot, resolving a signal of a different type
 evicts the previous one, and reactivity breaks — the app hangs forever on the
-startup splash because the session phase never reaches the router. Reproduced
-on web and macOS release builds; `trim-paths = "all"` already keeps filesystem
+startup splash because the session phase never reaches the router. The release
+profile therefore does not set it; `trim-paths = "all"` already keeps filesystem
 paths out of distributed binaries.
 
 ### Build Verification
@@ -158,7 +158,10 @@ eval "$(node scripts/dx-setup.ts)"
 
 # Every JS/TS file (harness, scripts, landing) — strict and type-aware
 npm ci
-npm run lint
+npm run check       # oxlint + TypeScript
+
+# Serialized tandem/e2e run (arguments pass through to test/run.ts)
+npm run e2e:locked -- --scenario S1 --surfaces web
 ```
 
 The two `cargo clippy` lines above compile only the desktop and web branches, so
@@ -180,10 +183,9 @@ cargo clippy --target aarch64-linux-android --features mobile -- -D warnings
 
 `scripts/dx-setup.ts` owns the host toolchain `dx` needs — web, desktop, Android, iOS —
 and runs its independent sections concurrently: the Android chain (JDK, SDK packages,
-NDK), the Rust components/targets this repo builds with, the dx Tailwind slot, and the
-platform extras. Nothing is version-pinned in what it exports: the JDK is the first
-existing candidate in its order, the NDK is the newest dir under `$ANDROID_HOME/ndk`
-(dx's rule), so a toolchain update applies to the next shell.
+NDK), the Rust components/targets this repo builds with, `NO_DOWNLOADS` tool
+discovery, and the platform extras. Its exports resolve at shell start; re-run it
+after a toolchain or `dx` update so the next shell sees the refreshed versions.
 
 Android's min/target/compile levels are the `[android]` block in `Dioxus.toml`. The script
 installs the newest OpenJDK within the range Gradle accepts, the newest
@@ -192,9 +194,10 @@ pins, and the newest NDK, then asserts the `aarch64-linux-android<API>-clang` wr
 pinned Dioxus CLI demands from `[android] min_sdk` — only recent NDKs ship it. `dx` has no
 default SDK path, so a shell without those exports
 reports *"Android not installed properly"*; on a terminal the script says whether your
-shells already resolve them and asks before changing anything (it writes
-`~/.config/po/env.sh` + a source line per shell; `setx` + user `PATH` on Windows, WebView2
-via winget). Native modules inherit the app's compile SDK; device-side prerequisites and
+shells already resolve them and asks before changing anything. With `--yes` it adds a
+generated block that exports the variables directly in your shell startup files (`setx` +
+user `PATH` on Windows, WebView2 via winget); there is no env-file mechanism. Native
+modules inherit the app's compile SDK; device-side prerequisites and
 the tandem harness are in [docs/device-testing.md](docs/device-testing.md#prerequisites).
 The macOS run also installs `xtool` and offers its Apple ID login. Android requests
 ACCESS_LOCAL_NETWORK at runtime for LAN peers. Denial leaves local-first startup
@@ -204,14 +207,16 @@ SDK compilation is not device certification: cold/warm links, permissions,
 camera cancellation, and background/foreground recovery still require target-device
 checks in [docs/debugging.md](docs/debugging.md).
 
+CI workflows warm the Cargo graph with per-job/profile Rust caches so builds
+reuse prior dependency compilation; keys separate arch/profile/job families and
+invalidate on the committed lockfile.
+
 `.github/workflows/quality.yml` checks formatting, desktop/Web Clippy, Swift, and
 the landing build on PRs. `release.yml` replaces placeholder PGO with bounded
 optimized builds and non-executing binary/architecture checks; it uploads
-**verification artifacts only**, without a production pepper, signing, or
-automatic publication. The release job records the pepper state in its build
-metadata: an artifact built without `PO_APP_PEPPER` is unprovisioned and cannot
-hash a password, while a supplied pepper is validated as base64 before the
-build proceeds. Linux/macOS raw-binary archives are not asset-complete
+**verification artifacts only**, without signing material or automatic
+publication. Key derivation takes no build-time secret, so every build of a
+revision produces the same account keys. Linux/macOS raw-binary archives are not asset-complete
 application bundles. Windows packaging uses the locked `dx` revision and the
 bundle publisher in `Dioxus.toml`. The macOS CI runner image is a preview one,
 not the locally verified GA Xcode build; the label each job uses is in
@@ -220,20 +225,21 @@ not the locally verified GA Xcode build; the label each job uses is in
 Use `cargo fmt --all -- --check` for a non-mutating formatting check. The locked
 `dx fmt --check` implementation can rewrite source before reporting its result.
 
-`dx build`/`dx serve` regenerate `assets/tailwind.css` automatically, but dx
-downloads its Tailwind binary from GitHub releases and silently ships stale
-CSS when that download fails (the tell: "Installing tailwindcss@vX" printed
-on every build). On networks that block GitHub downloads, link dx to the
-the npm-installed CLI instead — the only npm manifest and lockfile are at the
-repository root. Run `npm ci` there; `.nvmrc` uses nvm's `node` alias, while
-`engines.node` only sets the minimum required by native TypeScript scripts.
-Run `nvm install` to refresh the local Node alias. Link once, and again after
-every `dx` update (the expected version dir is hardcoded by each dx release):
-```bash
-./scripts/dx-tailwind-link.sh
-```
+`dx build`/`dx serve` regenerate `assets/tailwind.css` automatically. Under
+`NO_DOWNLOADS=1`, `dx` resolves Tailwind, `wasm-bindgen`, `wasm-opt`, and
+`esbuild` with `which()` instead of downloading them. `scripts/dx-setup.ts`
+prepares those paths and exports `NO_DOWNLOADS=1`: run `npm ci` for the npm
+Tailwind CLI, install the locked `dx` once with downloads enabled so it creates
+its managed tools directory, then re-run
+`eval "$(node scripts/dx-setup.ts)"` after every `dx` update to refresh the
+versioned tool dirs it puts on `PATH` (`node_modules/.bin`, managed
+`wasm-bindgen`/`binaryen`/`esbuild`). `TAILWIND_BIN` remains an optional
+override naming a standalone Tailwind executable; Windows CI uses it for the
+x64 standalone binary. `.nvmrc` uses nvm's `node` alias, while `engines.node`
+only sets the minimum required by native TypeScript scripts; `.npmrc` enforces
+that floor. Run `nvm install` to refresh the local Node alias.
 
-Manual one-off regeneration, if ever needed:
+Manual one-off Tailwind regeneration, if ever needed:
 
 ```bash
 npx @tailwindcss/cli -i tailwind.css -o assets/tailwind.css
@@ -256,13 +262,16 @@ node scripts/gen-icons.ts   # requires Node's built-in TypeScript type stripping
 |---|---|
 | `assets/logo.svg` | in-app logo, web/app SVG favicon, landing hero |
 | `assets/favicon.ico` | web fallback favicon (16/32/48) |
-| `assets/icons/ios/AppIcon*.png` | iOS launcher icons — `CFBundleIcons` in `native/apple/Info.ios.plist`; copied into the `.app` by `scripts/ios-device-deploy.sh` |
+| `assets/icons/ios/AppIcon*.png` | iOS launcher icons — `CFBundleIcons` in `native/apple/Info.ios.plist`; copied into the `.app` by `scripts/fix-bundle-case.sh` |
 | `assets/icons/icon.icns` | macOS Dock icon — `CFBundleIconFile` in `native/apple/Info.macos.plist`; copied into the bundle by `scripts/fix-bundle-case.sh` |
 | `assets/icons/android/*.xml` | Android adaptive-icon drawables — injected by `scripts/android-launcher-icons.sh` |
 | `landing/public/{logo.svg,favicon.ico,apple-touch-icon.png}` | landing site |
 
-The copy steps exist because the locked `dx` revision (`Cargo.lock`) has no
-icon pipeline for iOS/macOS/Android (`[bundle].icon` only affects `dx bundle`).
+`[application] name = "po"` in `Dioxus.toml` makes `dx build` emit `po.app`
+directly; `scripts/fix-bundle-case.sh` only injects the declared Apple icons,
+and `scripts/ios-device-deploy.sh` invokes it before signing and installing. The copy
+steps exist because the locked `dx` revision (`Cargo.lock`) has no icon pipeline
+for iOS/macOS/Android (`[bundle].icon` only affects `dx bundle`).
 
 ---
 
@@ -333,7 +342,7 @@ again or reopening a completed gate.
 ### Signup
 
 ```text
-random account ID -> Argon2(password, salt = account ID) -> account-bound DHT secret (pepper as derive_shared_secret key) -> encrypted keypair -> local save
+random account ID -> Argon2(password, salt = account ID) -> account-bound DHT secret (constant domain key) -> encrypted keypair -> local save
 -> enqueue identity create -> onboarding
 -> native biometric prompt (if available after valid PIN) -> main app
 ```
@@ -348,7 +357,7 @@ credential check -> decrypt keypair -> stage remember-me
 
 ### Pairing and Contact Input
 
-- Pairing accepts `po://pair?data=...`, `https://po-app.pages.dev/p/{payload}`, or raw payload; v3 pairing PINs are exactly 12 digits and expire after 5 minutes.
+- Pairing accepts `po://pair?data=...`, `https://po-app.pages.dev/p/{payload}`, or raw payload; v1 pairing PINs are exactly 12 digits and expire after 5 minutes.
 - Contact add accepts: `po:username#dht_key`, `https://po-app.pages.dev/c/{username}/{dht_key}`, encoded deep link, or `username|dht_key`.
 - Pairing and share actions trigger reactively once valid inputs are provided; superseded async attempts are discarded.
 
@@ -365,14 +374,14 @@ The authoritative identity and conversation layouts, reserved subkeys, encryptio
 | Mechanism | Detail |
 |---|---|
 | Password hashing | Argon2, salted with the 16-byte account ID |
-| DHT AEAD key | Password hash + random account ID under a versioned domain separator |
+| DHT AEAD key | Password hash + random account ID under the initial constant domain separator |
 | Storage encryption | AEAD on DHT/local persisted payloads (local rows encrypted by Veilid's TableDB under a device key in the OS protected store; insecure keyring in debug and e2e builds, browser storage on web) |
-| Identity key material | Account-bound encrypted keypair blob on identity subkey 3 |
+| Identity key material | Account-bound encrypted keypair blob on identity subkey 3, AEAD-bound to `po:keypair:v1` |
 | Password rotation | Re-encrypt identity-sensitive subkeys |
 | PIN | Argon2 hash (local + synced security state) |
 | Biometrics | Platform-native auth bridges |
-| Pairing | v3 QR payload + exact 12-digit, five-minute PIN + account password; remember-me wrap key remains device-local |
-| Backups | v3 AEAD-header-bound format using the account-bound DHT key; older formats are not imported |
+| Pairing | v1 QR payload + exact 12-digit, five-minute PIN + account password; remember-me wrap key remains device-local |
+| Backups | Initial v1 AEAD-header-bound format using the account-bound DHT key |
 | Deep links | `po://` + universal links under `https://po-app.pages.dev` |
 
 ---
@@ -396,7 +405,7 @@ This is the single catalog of process state and ownership. `GlobalSignal`s must 
 | `SNAPSHOT_REVISION` | `src/storage/snapshots/mod.rs` | Invalidates snapshot-history resources |
 | `DEEP_LINK_TOAST` | `src/components/overlays/deep_link_toast.rs` | Deep-link toast state |
 | `SHOW_ACTIVITY_MODAL` | `src/components/overlays/mod.rs` | Overlay-local UI signal |
-| `SYNC_STATUS`, `TRAINING_STATUS`, `UPGRADE_STATUS`, `HYDRATION_STATUS`, `PAIRING_SYNC_STATUS`, `BACKGROUND_ERRORS` | `src/storage/mod.rs`, `src/storage/background_errors.rs` | Operational status signals |
+| `SYNC_STATUS`, `PENDING_OPS_REVISION`, `TRAINING_STATUS`, `UPGRADE_STATUS`, `HYDRATION_STATUS`, `PAIRING_SYNC_STATUS`, `BACKGROUND_ERRORS` | `src/storage/mod.rs`, `src/storage/background_errors.rs` | Operational status signals plus the monotonic queue-content revision |
 | `NEXT_UPGRADE_STATUS_RUN` | `src/storage/mod.rs` | Allocates owner IDs for progress cleanup |
 | `CONV_MANAGER`, `WATCH_LOCKS` | `src/chat/manager.rs` | Process-local watch lifecycle manager and per-conversation watch locks; not `GlobalSignal`s |
 | `TYPING_GENERATION`, `TYPING_VERSIONS` | `src/chat/models/conversation.rs` | Monotonic typing-indicator generations and per-conversation typing state/version counters |
@@ -454,24 +463,25 @@ See [AGENTS.md](AGENTS.md) for coding policies and workflow standards, including
 
 ---
 
-## App Pepper (`PO_APP_PEPPER`)
+## Key Derivation
 
-Auth key derivation uses an app-level pepper compiled via `option_env!("PO_APP_PEPPER")`. It is the `derive_shared_secret` key over the credential hash — never the Argon2 salt of a new account. The Argon2 salt is the 16-byte account ID, public by design, which is what makes pairing reproducible; so equal passwords no longer produce equal stored hashes either.
-
-The DHT `SharedSecret` derivation also includes the random 16-byte account ID in a versioned, domain-separated input, so equal passwords do not produce the same DHT key.
+Auth key derivation uses **no build-time secret**. The credential hash is Argon2id over the
+password, salted with the account's 16-byte ID — public by design, which is what makes
+pairing reproducible; so equal passwords never produce equal stored hashes either. The DHT
+`SharedSecret` is then `derive_shared_secret(material, DHT_SECRET_DOMAIN_KEY)`, where the
+key is a compile-time constant domain separator rather than a secret, and the initial material
+is `"po:dht-secret:v1\0" ‖ account ID ‖ credential hash`. Entropy comes
+from the Argon2 hash alone: only someone who knows the password can reproduce it.
 
 ```bash
-# .env (or environment) must contain PO_APP_PEPPER=<secret>
 cargo build --release --features desktop
 ```
 
-Never commit the pepper. The one exception is deliberate and marked as such: `e2e.yml`
-carries a fallback value for harness builds (`--features e2e-seams`, never distributed, and
-`src/helpers/encryption.rs` only refuses an *empty* value), so a dispatch works without any
-repository configuration. It is overridden by `secrets.PO_APP_PEPPER`, then
-`vars.PO_APP_PEPPER`. Both peers of a harness run come from a single build, so any one
-consistent value lets them interoperate; a distributed build must still be given a real
-pepper, and an artifact built without one is unprovisioned.
+Because the derivation has no per-build input, every build of a revision derives the same
+account keys, no CI workflow has to plumb a secret, and there is nothing to leak from a
+release artifact. Pairing payload keys use
+`derive_shared_secret("po:pair:v1:" ‖ credential hash ‖ PIN, PAIRING_DOMAIN_KEY)`, under
+their own constant domain key.
 
 ---
 

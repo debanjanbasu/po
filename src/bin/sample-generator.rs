@@ -10,7 +10,16 @@ use std::{fmt::Write, fs, path::Path};
 
 use anyhow::Result;
 
-#[allow(clippy::all, clippy::pedantic, clippy::nursery)]
+// The generated Cap'n Proto modules self-allow `unused`/`unsafe_code`; the
+// pedantic lints that still fire on their output (module_inception,
+// elidable_lifetime_names, unreadable_literal, use_self) are allow-listed
+// exactly — generated code is not hand-fixable here.
+#[allow(
+    clippy::module_inception,
+    clippy::elidable_lifetime_names,
+    clippy::unreadable_literal,
+    clippy::use_self
+)]
 mod generated {
     include!(concat!(env!("OUT_DIR"), "/mod.rs"));
 }
@@ -33,10 +42,10 @@ capnp_enum_convert!(SampleStatus => chat_capnp::ContactStatus {
 });
 use generated::{group_chat_capnp, totp_capnp, user_capnp};
 
-const MESSAGE_PAGE_SCHEMA_VERSION: u32 = 2;
+const MESSAGE_PAGE_SCHEMA_VERSION: u32 = 1;
 const TOTP_SCHEMA_VERSION: u32 = 1;
-const USER_SCHEMA_VERSION: u32 = 2;
-const USER_CRYPTO_VERSION: u32 = 2;
+const USER_SCHEMA_VERSION: u32 = 1;
+const USER_CRYPTO_VERSION: u32 = 1;
 const USER_NONCE_LEN: usize = 24;
 
 fn main() -> Result<()> {

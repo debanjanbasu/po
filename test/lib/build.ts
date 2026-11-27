@@ -58,10 +58,10 @@ const SOURCE_DIRS: readonly string[] = ['src', 'assets', 'native'];
 
 /**
  * Files that can change the compiled artifact and are not under a
- * `SOURCE_DIRS` entry. The last two are inputs `build.rs` declares itself
- * (`cargo:rerun-if-changed`): the embedded `about.json` and the `.env` the app
- * pepper is read from — without them an edit to either leaves the artifact
- * looking fresh, and the harness runs the previous build.
+ * `SOURCE_DIRS` entry. The last one is an input `build.rs` declares itself
+ * (`cargo:rerun-if-changed`): the embedded `about.json` — without it an edit
+ * leaves the artifact looking fresh, and the harness runs the previous build.
+ * `.env` is deliberately absent: nothing in the build reads it anymore.
  */
 const SOURCE_FILES: readonly string[] = [
 	'build.rs',
@@ -71,7 +71,6 @@ const SOURCE_FILES: readonly string[] = [
 	'rust-toolchain.toml',
 	'.cargo/config.toml',
 	'shared/about.json',
-	'.env',
 ];
 
 /** Newest mtime (ms) across the build inputs, or 0 when none can be read. */

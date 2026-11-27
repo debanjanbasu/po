@@ -3,7 +3,7 @@
 
 use crate::{
     helpers::encryption::{
-        PasswordHashForm, crypto_system, crypto_system_sync, derive_dht_secret_from_hash,
+        crypto_system, crypto_system_sync, derive_dht_secret_from_hash,
         derive_dht_secret_from_password,
     },
     user::{EncryptedKeypair, NONCE_LEN, session_crypto::get_session_crypto},
@@ -25,7 +25,7 @@ pub(in crate::user) async fn encrypt_keypair(
     let nonce = crypto.random_nonce();
     let plaintext_bytes = Zeroizing::new(keypair.to_string().into_bytes());
     let ciphertext =
-        crypto.encrypt_aead(&plaintext_bytes, &nonce, secret, Some(b"po:keypair:v2"))?;
+        crypto.encrypt_aead(&plaintext_bytes, &nonce, secret, Some(b"po:keypair:v1"))?;
     let nonce_bytes: [u8; NONCE_LEN] = nonce
         .bytes()
         .as_ref()
@@ -60,7 +60,7 @@ pub(in crate::user) fn decrypt_keypair_with_secret(
     let nonce = Nonce::new(nonce_bytes);
     let decrypted = Zeroizing::new(
         crypto
-            .decrypt_aead(encrypted, &nonce, secret, Some(b"po:keypair:v2"))
+            .decrypt_aead(encrypted, &nonce, secret, Some(b"po:keypair:v1"))
             .map_err(|_| anyhow!("decryption failed"))?,
     );
     Ok(KeyPair::from_str(str::from_utf8(&decrypted)?)?)
@@ -83,19 +83,11 @@ pub async fn verify_backup_keypair(
     {
         kp
     } else {
-        // Which salt form the backup used is not recorded anywhere; the backup's
-        // keypair is the oracle. A backup exported before the account-ID salt is
-        // keyed by the pepper-salted form and would otherwise not import.
-        let mut opened = None;
-        for form in PasswordHashForm::NEWEST_FIRST {
-            let secret =
-                derive_dht_secret_from_password(backup_password, backup_account_id, form).await?;
-            if let Ok(kp) = decrypt_keypair_with_secret(backup_ciphertext, backup_nonce, &secret) {
-                opened = Some(kp);
-                break;
-            }
-        }
-        opened.ok_or_else(|| anyhow!("Backup keypair could not be decrypted"))?
+        // The backup password is hashed with the backup account's ID (the only
+        // salt form); the keypair decrypt is the oracle.
+        let secret = derive_dht_secret_from_password(backup_password, backup_account_id).await?;
+        decrypt_keypair_with_secret(backup_ciphertext, backup_nonce, &secret)
+            .map_err(|_| anyhow!("Backup keypair could not be decrypted"))?
     };
     if session.keypair != keypair {
         bail!("Backup keypair does not match this account");

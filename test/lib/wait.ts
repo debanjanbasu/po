@@ -47,10 +47,16 @@ export function parseFields(line: string): Dict {
   return out;
 }
 
-/** Strip ANSI colour codes — native logs interleave them inside fields. */
+/** Strip ANSI escape sequences — native logs interleave them inside fields.
+ *  Covers SGR colour codes and OSC sequences (hyperlinks, titles): an OSC 8
+ *  hyperlink around a marker would otherwise survive stripping and break
+ *  both `findMarker`'s word-boundary lookahead and `parseFields`. */
 export function stripAnsi(text: string): string {
-  // oxlint-disable-next-line no-control-regex -- stripping ANSI SGR codes means matching the ESC (0x1b) control character
-  return text.replace(/\x1b\[[0-9;]*m/gu, '');
+  // oxlint-disable no-control-regex -- stripping ANSI escapes means matching the ESC (0x1b) control character
+  return text
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/gu, '')
+    .replace(/\x1b\[[0-9;]*m/gu, '');
+  // oxlint-enable no-control-regex
 }
 
 /**
@@ -71,6 +77,56 @@ export function hasAnyMarker(text: string): boolean {
   return /event="?[a-z_]+"?(?=\s|$)/mu.test(stripAnsi(text));
 }
 
+interface MarkerHit {
+  line: string;
+  fields: Dict;
+}
+
+/**
+ * Compile an append-only log view into one marker lookup. Complete lines are
+ * parsed once; an unterminated line stays whole until its next chunk arrives,
+ * so a read can never discard half a marker, field, or ANSI sequence. Native
+ * logs commit only newline-terminated lines. Web console records explicitly
+ * opt in to a final unterminated line because Playwright emits each one whole.
+ * Replaced/truncated input resets the cache rather than mixing two log views.
+ */
+function createMarkerReader(marker: string, finalLineComplete: boolean): (text: string) => MarkerHit | undefined {
+  const re = new RegExp(`event="?${marker}"?(?=\\s|$)`, 'u');
+  let snapshot = '';
+  let pending = '';
+  let complete: MarkerHit | undefined;
+  let pendingRaw: string | undefined;
+  let pendingHit: MarkerHit | undefined;
+  const parse = (raw: string): MarkerHit | undefined => {
+    const line = stripAnsi(raw);
+    if (!re.test(line)) return undefined;
+    return { line, fields: parseFields(line) };
+  };
+  return (text: string): MarkerHit | undefined => {
+    if (text === snapshot) return pendingHit ?? complete;
+    const appended = text.startsWith(snapshot);
+    const delta = appended ? text.slice(snapshot.length) : text;
+    if (!appended) {
+      pending = '';
+      complete = undefined;
+      pendingRaw = undefined;
+      pendingHit = undefined;
+    }
+    snapshot = text;
+    const lines = `${pending}${delta}`.split('\n');
+    pending = lines.pop() ?? '';
+    for (const line of lines) {
+      const hit = parse(line);
+      if (hit !== undefined) complete = hit;
+    }
+    if (pending !== pendingRaw) {
+      pendingRaw = pending;
+      pendingHit = finalLineComplete ? parse(pending) : undefined;
+    }
+    return pendingHit ?? complete;
+  };
+}
+
 /**
  * Wait for `event=<marker>` in a peer's log and return the line's fields.
  *
@@ -81,13 +137,13 @@ export function waitForMarkerFields(
   text: () => string,
   marker: string,
   timeoutMs: number,
+  finalLineComplete = false,
 ): Promise<Dict> {
+  const readMarker = createMarkerReader(marker, finalLineComplete);
   return waitFor<Dict>(
     () => {
-      const line = findMarker(text(), marker);
-      if (line === undefined) return undefined;
-      const fields = parseFields(line);
-      return Object.keys(fields).length > 0 ? fields : undefined;
+      const hit = readMarker(text());
+      return hit !== undefined && Object.keys(hit.fields).length > 0 ? hit.fields : undefined;
     },
     { label: `marker event=${marker}`, timeoutMs },
   );
@@ -105,8 +161,9 @@ export async function readIdentityMarker(
   peer: string,
   text: () => string,
   timeoutMs: number,
+  finalLineComplete = false,
 ): Promise<{ username: string; dhtKey: string }> {
-  const fields = await waitForMarkerFields(text, 'identity', timeoutMs);
+  const fields = await waitForMarkerFields(text, 'identity', timeoutMs, finalLineComplete);
   const username = fields['username'];
   const dhtKey = fields['dht_key'];
   if (!username || !dhtKey) {
@@ -124,8 +181,9 @@ export async function readShareMarker(
   peer: string,
   text: () => string,
   timeoutMs: number,
+  finalLineComplete = false,
 ): Promise<{ pin: string; deepLink: string }> {
-  const fields = await waitForMarkerFields(text, 'share', timeoutMs);
+  const fields = await waitForMarkerFields(text, 'share', timeoutMs, finalLineComplete);
   const pin = fields['pin'];
   const deepLink = fields['deep_link'];
   if (!pin || !deepLink) {
@@ -168,12 +226,15 @@ async function awaitSignal(
   signal: Signal,
   timeoutMs: number,
 ): Promise<Omit<SignalHit, 'ms'>> {
+  // Web's joined console records are complete even without a trailing newline;
+  // native stdout/logcat must terminate a line before it can be observed whole.
+  const readMarker = createMarkerReader(signal.marker, surface.name === 'web');
   try {
     return await waitFor<Omit<SignalHit, 'ms'>>(
       () => {
-        const line = findMarker(surface.logs(peer), signal.marker);
-        if (line === undefined) return undefined;
-        return { kind: 'marker' as const, label: signal.label, line, fields: parseFields(line) };
+        const hit = readMarker(surface.logs(peer));
+        if (hit === undefined) return undefined;
+        return { kind: 'marker' as const, label: signal.label, line: hit.line, fields: hit.fields };
       },
       { label: signal.label, timeoutMs },
     );

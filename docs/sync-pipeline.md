@@ -29,7 +29,7 @@ local save → enqueue (TableDB) → notify → drain loop → IdentityContext /
 | `src/user/identity_layout.rs` | Single source of truth for identity record subkey assignments |
 | `src/storage/store_trait/` | `CrdtModel` trait + dual-format storage (`load_local`, `save_local`, `persist_and_sync`, `pull_and_merge`) with auto-compaction |
 | `src/storage/snapshots/` | Snapshot-history indexes, CRDT compaction, retention metadata |
-| `src/storage/mod.rs` (`sync_status`, `pairing_sync_status`, `training_status`, `upgrade_status`, `hydration_status`) | Operational status signals (`SYNC_STATUS`, `PAIRING_SYNC_STATUS`, `TRAINING_STATUS`, `UPGRADE_STATUS`, `HYDRATION_STATUS`) |
+| `src/storage/mod.rs` (`sync_status`, `pairing_sync_status`, `training_status`, `upgrade_status`, `hydration_status`) | Operational status signals (`SYNC_STATUS`, `PENDING_OPS_REVISION`, `PAIRING_SYNC_STATUS`, `TRAINING_STATUS`, `UPGRADE_STATUS`, `HYDRATION_STATUS`) |
 | `src/storage/automerge.rs` | Core automerge ops: `reconcile_to_automerge`, `from_automerge`, `merge_docs`, `merge_and_hydrate_with_stale_check` |
 | `src/sync/handler.rs` | Operation dispatch + direct composite/system/conversation handlers |
 | `src/user/sync_ops.rs` | Identity sync handlers and the static `publish_registered_op` surface map |
@@ -150,9 +150,14 @@ Dead-letter retry refuses to overwrite a newer pending owner for the same dedup 
 
 ### Queue/Training/Upgrade Status Signals
 
-Three global signals provide live operational status to `ActivityBar` and `ActivityModal`:
+Operational status is exposed to `ActivityBar` and `ActivityModal` by phase
+signals plus a monotonic queue-content revision:
 
 - `SYNC_STATUS` (`storage::sync_status`) tracks queue phase + pending/dead-letter counts.
+- `PENDING_OPS_REVISION` (also `storage::sync_status`) is bumped by
+  `refresh_sync_status()` on every queue mutation, including a same-count
+  replacement. Readers that render **row contents** subscribe to it in addition
+  to `SYNC_STATUS`; a UI keyed only on the phase can miss a squash or re-enqueue.
 - `TRAINING_STATUS` (`storage::training_status`) tracks dictionary training lifecycle.
 - `UPGRADE_STATUS` (`storage::upgrade_status`) tracks owner-scoped local recompression and DHT dictionary-sync progress.
 
@@ -271,7 +276,7 @@ Never hand-roll a delete of these keys: a partially wiped row (snapshot gone, do
 
 ### Snapshots
 
-`po_snapshots` is a two-column TableDB table of per-model/account history. Column 0 holds the snapshot index (binary format v2: version byte, count, `[timestamp, size]` pairs); column 1 holds each entry's restorable Cap'n Proto payload, keyed `model_id\0account_key\0timestamp_be` and zstd (`ZSTD_LEVEL` = 12) compressed through the `table_store::Table::store` API like every other TableDB row. Key features:
+`po_snapshots` is a two-column TableDB table of per-model/account history. Column 0 holds the snapshot index (initial binary format: `INDEX_FORMAT_VERSION = 1` version byte, count, `[timestamp, size]` pairs); column 1 holds each entry's restorable Cap'n Proto payload, keyed `model_id\0account_key\0timestamp_be` and zstd (`ZSTD_LEVEL` = 12) compressed through the `table_store::Table::store` API like every other TableDB row. Key features:
 
 - **Time travel**: `list_snapshots::<T>(account_key)` lists the retained entries from the index — no payload is inflated just to be listed. `restore_to_snapshot::<T>(account_key, timestamp)` restores a retained payload. Each snapshot's payload row is written **before** its index entry, so a failed payload write drops the entry instead of listing one that cannot be restored; a retained payload whose Cap'n Proto schema version differs from the running one fails with a downcastable `SchemaVersionError` (`Older`/`Newer`).
 - **Restore semantics**: restore decodes the payload via `decode_snapshot`, captures the pre-restore state as a new snapshot entry (so moving forward again is just restoring to a later entry in the list), then swaps state atomically via `replace_local`, which reconciles the restored value **into the retained automerge doc** and commits snapshot + doc + currentness marker in one transaction. Entries absent from the restored state become real CRDT delete operations, causally after the inserts the doc already merged, so the next publish deletes them on every device instead of resurrecting them — reconciling a fresh-root doc instead would race the DHT copy on `(lamport, actor)` and silently keep one root wholesale. Entries created concurrently on another device that this doc has never merged still survive (normal CRDT semantics). The backup-import Replace path (`import_all_raw`) applies the same reconcile-into-doc rule to the `ConversationIndex` row, in the same transaction as its message rows. A restore that matches the current state is a no-op.

@@ -94,3 +94,30 @@ pub fn OrDividerLink(
         }
     }
 }
+
+/// The standard ghost "Retry" button: one shape (daisyUI `btn-ghost`) and
+/// always `type="button"`, so every retry affordance reads the same and none
+/// of them can submit a form. Use this instead of raw `button` markup so a
+/// retry never grows its own class list; callers keep their own spacing and
+/// busy state.
+#[component]
+pub fn RetryButton(
+    #[props(default = "Retry")] label: &'static str,
+    /// Extra utility classes (size, spacing), appended after the base.
+    #[props(default = "")]
+    class: &'static str,
+    /// Disables the control while a retry or related work is in flight.
+    #[props(default = false)]
+    disabled: bool,
+    onclick: EventHandler<()>,
+) -> Element {
+    rsx! {
+        button {
+            class: "btn btn-ghost {class}",
+            r#type: "button",
+            disabled: disabled,
+            onclick: move |_| onclick.call(()),
+            "{label}"
+        }
+    }
+}

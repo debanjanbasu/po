@@ -15,6 +15,7 @@ mod build_about;
 use anyhow::{Context, Result, ensure};
 use std::{
     env, fs,
+    hash::{Hash, Hasher},
     path::{Path, PathBuf},
 };
 
@@ -23,29 +24,18 @@ use std::{
 const DICT_SIZE: usize = 16_384;
 const TRAINER_VERSION: u32 = 1;
 
-/// Deterministic FNV-1a hash of training parameters and samples.
+/// Deterministic hash of training parameters and samples, for the cache key.
+/// `DefaultHasher` (`SipHash` with fixed keys) is deterministic across runs and
+/// processes; the hash only has to match the app's own `.zdict.hash` file.
 fn hash_samples(samples: &[Vec<u8>]) -> u64 {
-    const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
-    const FNV_PRIME: u64 = 0x0100_0000_01b3;
-
-    let mut hash = FNV_OFFSET_BASIS;
-    for byte in DICT_SIZE
-        .to_le_bytes()
-        .into_iter()
-        .chain(TRAINER_VERSION.to_le_bytes())
-    {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
+    let mut hasher = std::hash::DefaultHasher::new();
+    DICT_SIZE.hash(&mut hasher);
+    TRAINER_VERSION.hash(&mut hasher);
     for sample in samples {
-        hash ^= sample.len() as u64;
-        hash = hash.wrapping_mul(FNV_PRIME);
-        for &byte in sample {
-            hash ^= u64::from(byte);
-            hash = hash.wrapping_mul(FNV_PRIME);
-        }
+        sample.len().hash(&mut hasher);
+        hasher.write(sample);
     }
-    hash
+    hasher.finish()
 }
 
 /// Check if cached dict and hash file match the current training cache key.
@@ -211,21 +201,6 @@ fn main() -> Result<()> {
     println!("cargo:rerun-if-changed=assets/dict/structured.zdict");
     println!("cargo:rerun-if-changed=assets/dict/structured.zdict.hash");
     println!("cargo:rerun-if-changed=shared/about.json");
-    println!("cargo:rerun-if-changed=.env");
-    println!("cargo:rerun-if-env-changed=PO_APP_PEPPER");
-    if env::var_os("PO_APP_PEPPER").is_none()
-        && let Ok(dotenv) = fs::read_to_string(".env")
-    {
-        for line in dotenv.lines().map(str::trim) {
-            if !line.starts_with('#')
-                && let Some((k, v)) = line.split_once('=')
-                && k.trim() == "PO_APP_PEPPER"
-            {
-                let v = v.trim().trim_matches('"').trim_matches('\'');
-                println!("cargo:rustc-env=PO_APP_PEPPER={v}");
-            }
-        }
-    }
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").context("OUT_DIR not set")?);
 

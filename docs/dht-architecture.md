@@ -49,7 +49,7 @@ Each user has exactly one identity record with 16 subkeys. The record is created
 
 ### Special Subkeys
 
-- **Subkey 3 (Keypair Blob)**: The keypair is already encrypted with the user's password before storage. It goes through `store_with_mode(..., StoreMode::Unencrypted)` which applies only plain zstd compression — no AEAD layer, since the blob is pre-encrypted.
+- **Subkey 3 (Keypair Blob)**: The keypair is already encrypted with the user's password before storage, under the `po:keypair:v1` AEAD associated-data tag. It goes through `store_with_mode(..., StoreMode::Unencrypted)` which applies only plain zstd compression — no second AEAD layer, since the blob is pre-encrypted.
 - **Subkey 5 (Dict Meta)**: `DictMeta` stores the active content identity (`dict_id`, e.g. `b3:<digest>`); new writers publish metadata with the dictionary-free transport frame.
 - **Subkey 6 (Dictionary Blob)**: Uses `store_with_mode(..., StoreMode::PlainEncrypted)` / `load_opt(..., false)` — AEAD-encrypted but compressed with plain zstd (no dictionary). This avoids circular dependency (can't use a trained dictionary to compress the dictionary itself).
 - **Subkey 7** is retired and unused.
@@ -182,23 +182,43 @@ get_dht_value()
 
 Schema versions, where applicable, are encoded inside the Cap'n Proto model bytes rather than by the encryption layer.
 
-Current unreleased schema versions: `ChatContactList`, `ConversationManifest`, `ConversationRoster`, `MessagePage`, and the `LocalConversation` envelope are v3; `ConversationIndex` remains v1. Older schemas are not migrated: strict reads reject mismatches, while the local-conversation loader replaces older envelope versions. Newer snapshots are never discarded. Message-status and `PeerSignal` tags remain unchanged.
+All snapshot schema constants start at `USER_SCHEMA_VERSION = 1`; each Cap'n Proto
+snapshot model carries its own schema version in the model bytes, and strict reads reject a
+mismatch. Message-status and `PeerSignal` tags are unchanged.
 
 ### SharedSecret Derivation
 
 The `SharedSecret` used for AEAD is derived from the user's password:
 
 ```
-password → Argon2 hash (salted with the 16-byte account ID; accounts created before the
-         account-ID salt used `PO_APP_PEPPER` as the salt)
-         → material = "po:dht-secret:v2\0" ‖ 16-byte account ID ‖ password hash
-         → derive_shared_secret(material, app_pepper)
+password → Argon2id credential hash (salted with the 16-byte account ID)
+         → material = "po:dht-secret:v1\0" ‖ 16-byte account ID ‖ credential hash
+         → derive_shared_secret(material, DHT_SECRET_DOMAIN_KEY) // constant domain key
          → SharedSecret
 ```
 
-The 16-byte random account ID is stored as 32 hexadecimal characters and decoded before derivation. Builds inject `PO_APP_PEPPER` via `option_env!`; local builds provide it in `.env`, which must not be committed — CI fails the build if `.env` is ever tracked.
+The 16-byte random account ID is stored as 32 lowercase hexadecimal characters and decoded
+before derivation. `DHT_SECRET_DOMAIN_KEY`
+(`src/helpers/encryption.rs`, currently
+`b"po:dht-secret:v1:domain-key:0123456789abcdef"`) is a compile-time constant domain
+separator, not a secret: all entropy lives in the Argon2 credential hash, so every build
+of a revision derives the same account keys and there is no build-time secret to
+provision, plumb through CI, or leak from an artifact.
 
-`cryptoVersion=0` used the retired account-agnostic key derivation. Current builds reject non-current crypto versions; no legacy decrypt or device-local reset flow remains. Existing DHT ciphertext is not migrated, and old pairing/backup formats are not accepted. There is no salt-form version tag either: a login tries `PasswordHashForm::NEWEST_FIRST` against the stored keypair blob (`src/user/auth/login_signup.rs::login_with_password`), and the form that opens it is the account's form — rehashing into the other one would re-derive the DHT secret, so the form is a runtime answer, never rewritten.
+A login hashes the password once (`src/user/auth/login_signup.rs::login_with_password`) and
+uses the same `CURRENT_CRYPTO_VERSION = 1` storage layout as every other build.
+
+Pairing payloads (version `PAIRING_VERSION = 1`) are framed as
+`account_id(16) ‖ nonce(24) ‖ ciphertext`, then encoded as unpadded base64url. The account
+ID travels in the clear — it is public by design — because the joiner needs it to reproduce the
+credential hash that keys the payload before it can decrypt anything. The encrypted body is
+`version(1) ‖ expiry(8, u64 LE) ‖ crypto kind(4) ‖ DHT record key(65) ‖ keypair(64) ‖
+account ID(16)`: the version byte names this layout from inside the ciphertext, the record
+key is `kind(4) ‖ opaque key(32) ‖ encryption-key-present(1) ‖ optional encryption key(32)`,
+and the body repeats the 16-byte account ID after the keypair. The payload key is
+`derive_shared_secret("po:pair:v1:" ‖ credential hash ‖ PIN, PAIRING_DOMAIN_KEY)`, under the
+constant `b"po:pair:v1:domain-key:0123456789abcdef"` (`src/user/pairing_crypto.rs`); its
+entropy is the credential hash plus the one-time 12-digit PIN.
 
 ### HPKE Key Wrapping
 

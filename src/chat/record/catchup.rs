@@ -27,7 +27,7 @@ use crate::{
     },
     config,
     helpers::concurrency,
-    helpers::{async_utils::retry_once_on_transient, store_lock::recover_poison},
+    helpers::{async_utils::retry_after_session_stable_delay, store_lock::recover_poison},
     session::epoch as session,
     storage::{background_errors::report_nonfatal, store_trait::load_local},
     user::ctx::UserCtx,
@@ -251,10 +251,13 @@ async fn sweep_conversation(ctx: &UserCtx, key: &str, guard: session::SessionGua
     // The retry re-runs the inspect after `RETRY_DELAY_MS`; nothing is written
     // from a stale session either way — `handle_conversation_change` re-checks
     // the epoch before it merges anything.
-    let report = retry_once_on_transient(store::is_transient_network_error, || {
+    let report = retry_after_session_stable_delay(guard, || {
         store::inspect_record(&record_key, Some(subkeys.clone()), DHTReportScope::SyncGet)
     })
     .await;
+    let Some(report) = report else {
+        return; // Session changed during the retry wait.
+    };
     match report {
         Ok(report) => {
             let newer = report.newer_online_subkeys();

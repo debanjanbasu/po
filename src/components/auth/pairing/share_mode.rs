@@ -6,7 +6,7 @@ use dioxus::prelude::*;
 use crate::{
     components::{
         auth::{LatestAttemptController, use_countdown, use_latest_attempt_controller},
-        shared::{QrShareCard, Spinner, SpinnerSize, use_form_field_manual},
+        shared::{QrShareCard, RetryButton, Spinner, SpinnerSize, use_form_field_manual},
     },
     config,
     helpers::async_utils::sleep_ms,
@@ -304,11 +304,9 @@ pub(super) fn ShareModeSection() -> Element {
             if let Some(err) = share_gen_error() {
                 p { class: "text-error text-center", "{err}" }
                 if last_password_attempt().as_deref() == Some(share_password.value.read().as_str()) {
-                    button {
-                        class: "btn btn-ghost btn-xs mx-auto",
-                        r#type: "button",
-                        onclick: move |_| last_password_attempt.set(None),
-                        "Retry"
+                    RetryButton {
+                        class: "btn-xs mx-auto",
+                        onclick: move |()| last_password_attempt.set(None),
                     }
                 }
             }

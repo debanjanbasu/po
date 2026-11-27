@@ -10,7 +10,7 @@ import { SeamMissing } from '../lib/wait.ts';
 import { findMarker, hasAnyMarker, waitFor, waitForSignal } from '../lib/wait.ts';
 import type { RunContext } from '../lib/run.ts';
 import type { Surface } from '../lib/types.ts';
-import { assertDhtReady, joinPairedDevice, recordIdentity } from './support.ts';
+import { assertDhtReady, joinPairedDevice, recordIdentity, recordObservation } from './support.ts';
 
 export const name = 'S1';
 export const description =
@@ -86,6 +86,28 @@ export async function run(ctx: RunContext, surfaces: Surface[]): Promise<void> {
       label: 'pairing complete',
       line: 'joiner reached device-sync-complete state',
     });
+    // Negative assertion (docs/device-testing.md S1 row): a clean pairing
+    // surfaces no `auth.pairing` background error. `report_nonfatal` has no
+    // event marker — it logs a `WARN` whose message carries the domain tag
+    // (e.g. "Failed to enqueue pre-pairing sync op: …") — so match the log
+    // line, which is what a human debugging would grep for.
+    const logText = joiner.logs(peers.joiner);
+    const pairingError = logText
+      .split('\n')
+      .find((line) =>
+        /WARN.*(Failed to enqueue pre-pairing sync op|Pairing failed|Failed to generate pairing payload|Failed to finalize paired account)/u.test(
+          line,
+        ),
+      );
+    if (pairingError !== undefined) {
+      throw new Error(`joiner logged an auth.pairing background error: ${ctx.mask(pairingError)}`);
+    }
+    recordObservation(
+      ctx,
+      { surface: joiner, peer: peers.joiner },
+      'no auth.pairing background errors',
+      'no auth.pairing WARN line in the joiner log after pairing completed',
+    );
   } catch (err) {
     const text = joiner.logs(peers.joiner);
     if (

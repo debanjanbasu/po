@@ -15,7 +15,7 @@ use veilid_core::{KeyPair, RecordKey};
 use crate::{platform::device_id::device_id, session::epoch::spawn_session_scoped};
 
 use super::{
-    routes::{prepare_signal_bytes_as, send_prepared_signal_excluding},
+    routes::{prepare_signal_bytes_as, send_prepared_signal},
     wire::{PeerSignal, SignalPayload},
 };
 
@@ -39,7 +39,7 @@ pub fn nudge_sibling_devices(identity_key: RecordKey, keypair: KeyPair, scope: u
             return;
         };
         let identity_str = identity_key.to_string();
-        let delivered = send_prepared_signal_excluding(
+        let delivered = send_prepared_signal(
             &identity_str,
             message,
             Some(own_device.as_ref()),

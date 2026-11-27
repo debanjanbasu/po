@@ -35,13 +35,18 @@ automerge = "0.12"
 autosurgeon = "0.14"
 # Deterministic scoped keypair derivation (same version veilid-core uses).
 ed25519-dalek = { version = "3", default-features = false, features = ["fast", "zeroize"] }
+# The `image` feature is required: qrcode's `Pixel for image::Luma<u8>` impl lives
+# behind it (qrcode-0.14.1 `src/render/image.rs:1` `#![cfg(feature = "image")]`),
+# and `platform/qr.rs` renders through `Renderer<Luma<u8>>`. It does NOT pull a
+# second `image` — the crate unifies with our direct `image` dep below.
 qrcode = { version = "0.14", default-features = false, features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 rqrr = { version = "0.11", default-features = false }
-# True-LRU cache. Note: rqrr pins lru 0.18, so 0.19 here is a *second* copy of
-# the crate in the build — the comment that used to claim otherwise was wrong.
-# 0.19 is kept for the newer API; dedupe by moving rqrr's pin when it allows it.
-lru = { version = "0.19", features = ["nightly"] }
+# True-LRU cache, pinned to 0.18 so it is the *same* copy rqrr 0.11 already
+# pulls in — no second lru in the build. The used API (new/put/get/pop_lru)
+# is identical across 0.18/0.19, and the `nightly` feature was never needed
+# (no hashbrown-typed API is used).
+lru = "0.18"
 base64 = "0.23"
 anyhow = "1"
 thiserror = "2"
@@ -68,6 +73,7 @@ foldhash = "0.2"
 
 [build-dependencies]
 anyhow = "1"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 recapnc = { git = "https://github.com/cloudflare/recapn" }
 # No `fat-lto` here: it makes the build-script's C compile emit LLVM bitcode
@@ -168,16 +174,15 @@ string_slice = "deny"
 volatile_composites = "allow"
 # Client-only Dioxus app: futures run on single-threaded runtime, Send not required
 future_not_send = "allow"
-# Measured: 83 sites, 18-38 KB each, concentrated in `veilid/change_dispatcher.rs`
-# and `user/watcher/*` — the async paths that carry Veilid mailbox types. Boxing
-# them would add an allocation per call on the hottest sync path to satisfy a
-# pedantic size heuristic, so the futures stay by value.
-large_futures = "allow"
-# Measured: 48 sites, every one rustc attributes to the `Props` derive ("originates
-# in the derive macro Props"). The uninhabited enums are that derive's per-field
-# error markers, which already carry `#[allow(dead_code, …)]` lists of their own —
-# so the fix is adding `clippy::empty_enums` to those lists in the fork's
-# `core-macro/src/props/`, not annotating 48 items here.
+# `large_futures` is enforced (pedantic): the 38 large futures that carried
+# Veilid mailbox types (`VeilidValueChange`) by value are now `Box`ed at the
+# boundary or `Box::pin`ed at their await sites, so the dispatcher hot path
+# allocates once per event, not per call stack.
+# Measured: 52 sites, every one rustc attributes to the `Props` derive ("originates
+# in the derive macro Props"; the fork's generated marker enum at
+# vdom-macro/src/props/mod.rs:1353 carries `#[allow(dead_code, …)]` but not
+# `clippy::empty_enums` — the fix belongs there, in the fork, not as 52
+# per-component allows here).
 empty_enums = "allow"
 
 [features]

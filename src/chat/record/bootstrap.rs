@@ -281,9 +281,7 @@ async fn publish_initial_state(
             .await??;
         let member_index = conv
             .roster
-            .members
-            .iter()
-            .position(|member| member.identity_key == ctx.user.dht_key())
+            .my_member_index(ctx.user.dht_key(), false)
             .context("Conversation owner is missing from its member slots")?;
         store::with_transaction(vec![key.clone()], |tx| async move {
             ensure!(

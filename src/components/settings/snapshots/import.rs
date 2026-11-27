@@ -9,7 +9,7 @@ use crate::platform::share::pick_backup_file;
 use crate::{
     components::{
         settings::shell::SettingsCard,
-        shared::{ModalDialog, Spinner, SpinnerSize, close_modal_dialog},
+        shared::{ModalDialog, RetryButton, Spinner, SpinnerSize, close_modal_dialog},
     },
     config::backup::MAX_FILE_BYTES,
     helpers::spawn,
@@ -337,17 +337,15 @@ pub(super) fn ImportPasswordModal(import_dialog_id: String, mut state: ImportSta
                 }
                 if let Some(err) = &(state.error)() {
                     p { class: "text-error text-xs", "{err}" }
-                    button {
-                        class: "btn btn-ghost btn-xs",
-                        r#type: "button",
-                        onclick: move |_| {
+                    RetryButton {
+                        class: "btn-xs",
+                        onclick: move |()| {
                             let password = state.password.read().clone();
                             if !password.is_empty() {
                                 last_attempted_password.set(Some(password.clone()));
                                 start_decrypt(password);
                             }
                         },
-                        "Retry"
                     }
                 }
             }

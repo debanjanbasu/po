@@ -17,7 +17,7 @@
 // (the app would otherwise start without its env), and reuses the peer's
 // launch env (the restarted app must keep the pairing seams).
 import { createHash } from 'node:crypto';
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { inflateSync } from 'node:zlib';
 import { ensureBuilt, E2E_SEAM_FEATURE } from '../lib/build.ts';
@@ -222,20 +222,16 @@ async function resolveApp(ctx: { note(m: string): void }): Promise<string> {
         allowFail: true,
       });
       if (res.code !== 0) throw new Error(`dx build ios failed:\n${res.stderr}`);
-      // dx emits the legacy PascalCase bundle dir; normalize it to `po.app`.
+      // dx emits `po.app` directly ([application] name = "po"); the script
+      // only injects the iOS launcher icons the plist declares, since dx's
+      // `dx build` has no icon pipeline (`[bundle].icon` only affects
+      // `dx bundle`).
       const fix = await exec('bash', [join(process.cwd(), 'scripts', 'fix-bundle-case.sh'), base], {
         cwd: process.cwd(),
         timeoutMs: 120_000,
         allowFail: true,
       });
       if (fix.code !== 0) throw new Error(`fix-bundle-case.sh failed:\n${fix.stderr}`);
-      // dx has no iOS icon pipeline; copy the launcher PNGs the plist declares.
-      const icons = join(process.cwd(), 'assets', 'icons', 'ios');
-      for (const icon of readdirSync(icons)) {
-        if (icon.startsWith('AppIcon') && icon.endsWith('.png')) {
-          copyFileSync(join(icons, icon), join(app, icon));
-        }
-      }
     },
   });
   return app;

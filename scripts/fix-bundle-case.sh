@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# Normalize dx's generated legacy bundle path (`Po.app`) to the product's lowercase `po.app`.
+# Inject the app icons into a dx-built Apple bundle.
 #
-# dx hardcodes `PascalCase(crate_name).app` for iOS/macOS bundle dirs with no
-# config override (packages/cli/src/build/request.rs, bundled_app_name), so
-# dx therefore emits the legacy filesystem path "Po.app" for the lowercase
-# product "po". Renaming a signed .app is safe:
-# the code signature does not cover the bundle directory name.
+# `[application] name = "po"` in Dioxus.toml already makes dx emit the
+# lowercase `po.app` bundle dir directly (no rename needed), but `dx build`
+# still has no icon pipeline — `[bundle].icon` only affects `dx bundle` — so
+# the icons the plists declare are copied in post-build.
 #
 # Safe on case-sensitive and case-insensitive filesystems.
 #
@@ -13,16 +12,7 @@
 
 set -euo pipefail
 
-dir="${1:?usage: fix-bundle-case.sh <platform dir containing dx-generated legacy Po.app>}"
-names="$(command ls -1 "$dir")"
-
-if [[ $'\n'"$names"$'\n' == *$'\n'Po.app$'\n'* ]]; then
-  [[ $'\n'"$names"$'\n' == *$'\n'po.app$'\n'* ]] && rm -rf "${dir:?}/po.app"
-  mv "$dir/Po.app" "$dir/po.app"
-elif [[ $'\n'"$names"$'\n' != *$'\n'po.app$'\n'* ]]; then
-  echo "ERROR: no po.app (or dx-generated legacy Po.app) bundle in $dir" >&2
-  exit 1
-fi
+dir="${1:?usage: fix-bundle-case.sh <platform dir containing the dx-built po.app>}"
 
 # macOS bundles only: dx build never copies the icon that native/apple/Info.macos.plist
 # declares (CFBundleIconFile = icon.icns), so inject it post-build. Copy
@@ -37,5 +27,9 @@ fi
 # Copy unconditionally so regenerated icons replace stale ones.
 app="$dir/po.app"
 if [ ! -d "$app/Contents" ]; then
+  if [ ! -d "$app" ]; then
+    echo "ERROR: no po.app bundle in $dir" >&2
+    exit 1
+  fi
   cp -f "$(dirname "$0")"/../assets/icons/ios/AppIcon*.png "$app/"
 fi

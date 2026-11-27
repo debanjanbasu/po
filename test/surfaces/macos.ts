@@ -17,7 +17,7 @@ const DX = join(process.env.HOME ?? '', '.cargo', 'bin', 'dx');
 /** Resolve the built .app's executable; build with dx if missing or stale. */
 async function resolveBinary(ctx: { note(m: string): void }): Promise<string> {
   const dir = join(process.cwd(), 'target', 'dx', 'po', 'release', 'macos');
-  const bin = join(dir, 'Po.app', 'Contents', 'MacOS', 'po');
+  const bin = join(dir, 'po.app', 'Contents', 'MacOS', 'po');
   await ensureBuilt({
     artifact: bin,
     what: 'macOS build',
@@ -33,7 +33,7 @@ async function resolveBinary(ctx: { note(m: string): void }): Promise<string> {
       // re-registered, `open -a <bundle> po://…` fails with -600
       // (procNotFound) even though the app is running. Registering the
       // freshly built bundle makes the deep-link channel work.
-      const bundle = join(dir, 'Po.app');
+      const bundle = join(dir, 'po.app');
       await exec('/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister', [
         '-f',
         bundle,

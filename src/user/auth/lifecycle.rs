@@ -43,7 +43,7 @@ async fn classify_second_factor(user: &User) -> SecondFactor {
 pub async fn admit_user(user: User) -> Result<()> {
     let factor = classify_second_factor(&user).await;
     match factor {
-        SecondFactor::None => session_phase::complete_admission(user).await?,
+        SecondFactor::None => Box::pin(session_phase::complete_admission(user)).await?,
         SecondFactor::Pin => session_phase::enter_second_factor(user),
         SecondFactor::Biometric => session_phase::enter_biometric(user),
     }

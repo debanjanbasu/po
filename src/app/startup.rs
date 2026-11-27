@@ -99,7 +99,7 @@ async fn run_local_init() -> Result<()> {
             &*SESSION.peek(),
             SessionPhase::Restoring | SessionPhase::Anonymous
         );
-        if untouched && let Err(error) = admit_user(user).await {
+        if untouched && let Err(error) = Box::pin(admit_user(user)).await {
             report_nonfatal("app.startup", "Failed to restore remembered session", error);
         }
     }
@@ -107,7 +107,15 @@ async fn run_local_init() -> Result<()> {
     // session already owned by another actor, or complete_admission bailing
     // without setting a phase) must give way to the login form — the helper
     // no-ops when another actor moved the session on.
+    info!(
+        "DEBUG startup before anonymous transition: restoring={}",
+        matches!(&*SESSION.peek(), SessionPhase::Restoring)
+    );
     resolve_restore_to_anonymous();
+    info!(
+        "DEBUG startup after anonymous transition: anonymous={}",
+        matches!(&*SESSION.peek(), SessionPhase::Anonymous)
+    );
     Ok(())
 }
 /// Phase 2: Network attachment. Runs in the background — can fail and retry
@@ -158,7 +166,7 @@ pub async fn run_app_init() {
         is_permanent_local_error,
         || async {
             APP_BOOTSTRAP.get_or_init(samples::init);
-            run_local_init().await.context("Local init")
+            Box::pin(run_local_init()).await.context("Local init")
         },
     )
     .await

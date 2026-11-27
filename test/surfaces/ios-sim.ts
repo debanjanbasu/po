@@ -1,9 +1,9 @@
 // iOS simulator surface — `xcrun simctl` only: boot/erase/install/launch
 // --console/openurl/io screenshot/privacy grant, SIMCTL_CHILD_* env.
-import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { definedEnv, exec, execBuffer, spawnLogged, type Captured } from '../lib/proc.ts';
-import { isStale, E2E_SEAM_FEATURE } from '../lib/build.ts';
+import { ensureBuilt, E2E_SEAM_FEATURE } from '../lib/build.ts';
 import { surfaceShotPath } from '../lib/run.ts';
 import { readIdentityMarker, readShareMarker, waitFor } from '../lib/wait.ts';
 import type { Dict, SurfaceOptions } from '../lib/types.ts';
@@ -47,39 +47,27 @@ async function approveUrlScheme(udid: string): Promise<void> {
 
 /** Resolve the built ios-sim .app; build with dx if missing or stale. */
 async function resolveApp(ctx: { note(m: string): void }): Promise<string> {
-  // dx writes the simulator build to `debug/ios/` (the bundle dir is
-  // `Po.app` until scripts/fix-bundle-case.sh normalizes it).
+  // dx writes the simulator build to `release/ios/` in the `po.app` bundle
+  // dir (`[application] name = "po"` in Dioxus.toml pins the lowercase name).
   const base = join(process.cwd(), 'target', 'dx', 'po', 'release', 'ios');
-  let app: string | undefined;
-  try {
-    app = findApp(base);
-  } catch {
-    // fall through to build
-  }
-  // A build older than the newest source file is stale: it would silently run
-  // yesterday's code while the source moved on. Rebuild it.
-  if (app !== undefined && !isStale(app)) return app;
-  ctx.note(app === undefined ? 'iOS sim build missing — rebuilding' : 'iOS sim build stale — rebuilding');
-  const res = await exec(DX, ['build', '--release', '--features', E2E_SEAM_FEATURE, '--platform', 'ios', '--target', 'aarch64-apple-ios-sim'], {
-    cwd: process.cwd(),
-    timeoutMs: 3_600_000,
-    allowFail: true,
+  const app = join(base, 'po.app');
+  await ensureBuilt({
+    // The plist is required by simctl and changes with bundle metadata even
+    // when the executable does not, so it is the artifact freshness anchor.
+    artifact: join(app, 'Info.plist'),
+    what: 'iOS sim build',
+    note: ctx.note.bind(ctx),
+    hint: 'dx build --platform ios produced no po.app/Info.plist',
+    build: async () => {
+      const res = await exec(DX, ['build', '--release', '--features', E2E_SEAM_FEATURE, '--platform', 'ios', '--target', 'aarch64-apple-ios-sim'], {
+        cwd: process.cwd(),
+        timeoutMs: 3_600_000,
+        allowFail: true,
+      });
+      if (res.code !== 0) throw new Error(`dx build ios failed:\n${res.stderr}`);
+    },
   });
-  if (res.code !== 0) throw new Error(`dx build ios failed:\n${res.stderr}`);
-  app = findApp(base);
-  if (app === undefined) throw new Error(`no .app found under ${base} after build`);
   return app;
-}
-
-function findApp(base: string): string | undefined {
-  try {
-    for (const name of readdirSync(base)) {
-      if (name.endsWith('.app')) return join(base, name);
-    }
-  } catch {
-    return undefined;
-  }
-  return undefined;
 }
 
 export async function create(

@@ -38,6 +38,19 @@ use dioxus::desktop::{Config, LogicalSize, WindowBuilder};
 #[cfg(all(feature = "desktop", target_os = "macos"))]
 use dioxus::desktop::tao::platform::macos::WindowBuilderExtMacOS;
 
+/// Which builds render a borderless window whose chrome the page draws
+/// (`"desktop"`); off desktop the marker is the empty string. This is the
+/// single source of truth for the marker: the shell stamps it on the root
+/// element (`data-window-chrome`, which `overrides.css` reads to reserve the
+/// chrome band) and the window chrome component gates its desktop-only parts
+/// on it. Every other platform keeps its viewport to itself: web is inside
+/// the browser's chrome and the phones hide the system bars instead.
+#[cfg(all(
+    feature = "desktop",
+    any(target_os = "macos", target_os = "windows", target_os = "linux")
+))]
+pub const BORDERLESS: &str = "desktop";
+
 /// Native window title.
 ///
 /// With the title bar gone this is what the task bar, Alt-Tab and Mission

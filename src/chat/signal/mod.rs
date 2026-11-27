@@ -15,7 +15,7 @@ mod routes;
 mod wire;
 
 pub use dispatch::handle_app_message;
-pub use fanout::{conv_sender_keys, signal_all_peers};
+pub use fanout::{conv_sender_keys, fan_new_data_if_session_current, signal_all_peers};
 pub use nudge::nudge_sibling_devices;
 pub use routes::{
     clear_route_cache, evict_routes_for_identity, handle_dead_routes, prepare_signal_bytes,

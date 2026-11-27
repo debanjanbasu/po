@@ -130,11 +130,11 @@ pub(super) async fn generate_share(password: &str) -> Result<ShareGenerationResu
         )
     };
 
-    // Verify once; the payload below is keyed from the password itself, and the
-    // salt form it reports tells the joining device how to derive the DHT secret.
-    let Some(form) = user::verify_password(&username, password).await? else {
+    // Verify once; the payload below is keyed from the account's credential
+    // hash, which this device reproduces from the password and account ID.
+    if user::verify_password(&username, password).await?.is_none() {
         return Ok(ShareGenerationResult::WrongPassword);
-    };
+    }
 
     // The joining device pulls everything from the DHT by keys derived from
     // the shared keypair, so the only hard requirement at QR time is that the
@@ -170,7 +170,7 @@ pub(super) async fn generate_share(password: &str) -> Result<ShareGenerationResu
     // (see [`verify_publish_warning`]) — the human scanning + typing the PIN
     // gives it a 10-20s head start before the other device pulls anything.
     let (payload, pin) =
-        generate_pairing_payload(&dht_key, &keypair, &account_id, password, form).await?;
+        generate_pairing_payload(&dht_key, &keypair, &account_id, password).await?;
     let pairing_id = pairing_beacon::pairing_id_for_payload(&payload)?;
     let deep_link = pairing_deep_link(&payload);
     // QR encodes the https share URL so external camera apps open the landing

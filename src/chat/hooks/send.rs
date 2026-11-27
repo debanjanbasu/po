@@ -16,10 +16,7 @@ use crate::{
         contact::ContactList,
         conversation,
         feed::{FeedMessage, MessageStatus, generate_msg_id, insert_sorted_message},
-        manifest::MemberStatus,
-        mark_message_status, record,
-        signal::{self, PeerSignal, SignalPayload, signal_all_peers},
-        storage,
+        mark_message_status, record, signal, storage,
     },
     compression::{samples::collect_chat, training_queue::extract_chat_pattern},
     config,
@@ -48,18 +45,7 @@ async fn enqueue_and_signal(
     )
     .await?;
 
-    if guard.is_current()
-        && let Some((conv_key, sender_identity)) = signal::conv_sender_keys(ck)
-    {
-        signal_all_peers(
-            peers,
-            &PeerSignal::unsigned(SignalPayload::NewData {
-                conv_key,
-                sender_identity,
-                member_subkey: my_member_subkey,
-            }),
-        );
-    }
+    signal::fan_new_data_if_session_current(guard, ck, peers, my_member_subkey);
     Ok(())
 }
 
@@ -169,11 +155,7 @@ async fn save_and_queue_message(
         let peers = conv.roster.peer_identity_keys(&ctx.dht_key);
         let Some(my_member_subkey) = conv
             .roster
-            .members
-            .iter()
-            .position(|member| {
-                member.identity_key == ctx.dht_key.as_ref() && member.status == MemberStatus::Active
-            })
+            .my_member_index(&ctx.dht_key, true)
             .map(record::member_feed_subkey)
         else {
             blocked = Some(SendBlock::NotInRoster);

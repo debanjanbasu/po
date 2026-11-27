@@ -29,16 +29,13 @@
 #   ~/.cargo/bin/dx build --ios --target aarch64-apple-ios
 #   ./scripts/ios-device-deploy.sh
 #
-# All settings are auto-detected; override via .env when needed:
+# All settings are auto-detected; override via environment variables when
+# needed:
 #   APP, BUNDLE_ID, UDID (xtool), DEVICE (devicectl), DEVSERVER_IP, DEVSERVER_PORT
 #   SKIP_INSTALL=1  relaunch the already-installed build (hot reload only,
 #                   no cable needed - devicectl launches over Wi-Fi)
 
 set -euo pipefail
-
-# .env is optional user config; no need for shellcheck to follow it
-[ -f .env ] && { set -a; # shellcheck disable=SC1091
-. ./.env; set +a; }
 
 BUILD_DIR="${BUILD_DIR:-target/dx/po/debug/ios}"
 BUNDLE_ID="${BUNDLE_ID:-com.debanjanbasu.po}"
@@ -65,11 +62,10 @@ else
   fi
   [ -d "$APP" ] || { echo "ERROR: $APP not found - run the dx build first." >&2; exit 1; }
 
-  # dx 0.8.0-alpha.1 has no iOS icon pipeline, so copy the launcher PNGs
-  # declared under CFBundleIcons in native/apple/Info.ios.plist into the bundle root.
-  # Runs before xtool, which signs the whole bundle afterwards.
-  echo "==> Injecting launcher icons"
-  cp "$(dirname "$0")/../assets/icons/ios/"AppIcon*.png "$APP/"
+  # The launcher PNGs declared under CFBundleIcons in native/apple/Info.ios.plist
+  # were already copied into the bundle by fix-bundle-case.sh above (dx's
+  # `dx build` has no icon pipeline). Signing + install below runs after, so
+  # xtool signs the icons in.
 
   echo "==> Signing + installing via xtool"
   # xtool discovers devices via usbmuxd (USB cable or Finder Wi-Fi-sync

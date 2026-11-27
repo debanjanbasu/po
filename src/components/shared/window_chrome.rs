@@ -39,11 +39,15 @@ use dioxus::logger::tracing::warn;
 /// system bars instead — see `native/android/MainActivity.kt`).
 #[component]
 pub fn WindowChrome() -> Element {
+    // `platform::window::BORDERLESS` is the marker the shell stamps on the
+    // root element; the same cfg here keeps the page's chrome drawn exactly
+    // on the platforms whose band that marker reserves.
     #[cfg(all(
         feature = "desktop",
         any(target_os = "macos", target_os = "windows", target_os = "linux")
     ))]
     {
+        let _ = crate::platform::window::BORDERLESS;
         desktop_chrome()
     }
     #[cfg(not(all(

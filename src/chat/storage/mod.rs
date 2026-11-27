@@ -59,17 +59,17 @@ const CONV_TABLE: &str = "po_conversations";
 
 /// Current schema version for the `LocalConversation` Cap'n Proto struct.
 // Older local snapshots are replaced by the storage read policy.
-const LOCAL_CONV_SCHEMA_VERSION: u32 = 3;
+const LOCAL_CONV_SCHEMA_VERSION: u32 = 1;
 const LOCAL_CONV_TYPE_NAME: &str = "LocalConversation";
-const MANIFEST_SCHEMA_VERSION: u32 = 3;
+const MANIFEST_SCHEMA_VERSION: u32 = 1;
 const MANIFEST_TYPE_NAME: &str = "GroupChat.ConversationManifest";
-const ROSTER_SCHEMA_VERSION: u32 = 3;
+const ROSTER_SCHEMA_VERSION: u32 = 1;
 const ROSTER_TYPE_NAME: &str = "GroupChat.ConversationRoster";
 const KEY_RING_SCHEMA_VERSION: u32 = 1;
 const KEY_RING_TYPE_NAME: &str = "GroupChat.ConversationKeyRing";
-const FEED_META_SCHEMA_VERSION: u32 = 2;
+const FEED_META_SCHEMA_VERSION: u32 = 1;
 const FEED_META_TYPE_NAME: &str = "GroupChat.ParticipantFeedMeta";
-const MESSAGE_PAGE_SCHEMA_VERSION: u32 = 3;
+const MESSAGE_PAGE_SCHEMA_VERSION: u32 = 1;
 const MESSAGE_PAGE_TYPE_NAME: &str = "GroupChat.MessagePage";
 
 capnp_enum_convert!(MemberRole => group_chat_capnp::MemberRole {

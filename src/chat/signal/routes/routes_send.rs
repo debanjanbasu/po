@@ -86,20 +86,11 @@ pub async fn send_signal_as(
     let Some(message) = prepare_signal_bytes_as(signal, sender_identity, keypair).await else {
         return false;
     };
-    send_prepared_signal_excluding(identity_key, message, None, signal.is_durable()).await
+    send_prepared_signal(identity_key, message, None, signal.is_durable()).await
 }
 
-/// Sends a prepared signal while skipping one device's route — used for same-account
-/// sync nudges so the sending device does not signal itself.
-pub async fn send_prepared_signal_excluding(
-    identity_key: &str,
-    message: Arc<Vec<u8>>,
-    exclude_device: Option<&str>,
-    retryable: bool,
-) -> bool {
-    send_prepared_signal(identity_key, message, exclude_device, retryable).await
-}
-
+/// Sends a prepared signal while skipping one device's route — `Some` for
+/// same-account sync nudges so the sending device does not signal itself.
 pub(in crate::chat::signal) async fn send_prepared_signal(
     identity_key: &str,
     message: Arc<Vec<u8>>,

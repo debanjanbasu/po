@@ -20,7 +20,7 @@
 // the whole DOM signature (`span.loading.loading-dots` is used by nothing
 // else in this view — the send spinner is `loading-spinner`).
 
-import { sleep, waitFor, waitForSignal } from '../lib/wait.ts';
+import { waitFor, waitForSignal } from '../lib/wait.ts';
 import type { RunContext } from '../lib/run.ts';
 import type { Surface } from '../lib/types.ts';
 import { BUDGET, PASSWORD, contactLink, countMarker, pickPeers, skip } from './support.ts';
@@ -165,13 +165,22 @@ export async function run(ctx: RunContext, surfaces: Surface[]): Promise<void> {
     );
   }
 
-  // ── It is a signal: it must expire on its own, and never become a message ─
-  await sleep(EXPIRY_SETTLE_MS);
+  // ── It is a signal: it must expire on its own, and never become a message ──
+  // Poll for disappearance instead of a fixed sleep: the app's expiry is
+  // config::typing::EXPIRY_MS (5 s) after the last keystroke, so the bubble
+  // must be gone within EXPIRY_SETTLE_MS. A fixed sleep both false-fails on a
+  // slow renderer and false-passes if the signal arrives late (the bubble
+  // could render *after* the check).
+  const appearedAt = Date.now();
+  await waitFor(
+    async () => ((await bubbleCount(alpha.peer, alphaDom)) === 0 ? 'gone' : undefined),
+    { label: 'typing bubble to expire', timeoutMs: EXPIRY_SETTLE_MS },
+  );
   const expired = await bubbleCount(alpha.peer, alphaDom);
   if (expired !== 0) {
     throw new Error(
-      `S15 FINDING: the typing bubble was still rendered ${EXPIRY_SETTLE_MS}ms after the sender's ` +
-        `keystroke (x${expired}) — the app's typing expiry did not clear it`,
+      `S15 FINDING: the typing bubble was still rendered ${Date.now() - appearedAt}ms after the ` +
+        `sender's keystroke (x${expired}) — the app's typing expiry did not clear it`,
     );
   }
   const bubbles = (await beta.surface.readMessages?.(beta.peer)) ?? [];

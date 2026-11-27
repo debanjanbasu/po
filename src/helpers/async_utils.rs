@@ -114,6 +114,40 @@ where
     }
 }
 
+/// Runs `op` after waiting [`config::nudge::RETRY_DELAY_MS`], but only when
+/// the session captured by `guard` is still current on both sides of the
+/// wait — abort-on-session-change for the shared retry-once-after-2 s
+/// pattern (`NewData` signal re-pulls, catch-up sweep inspects).
+pub async fn retry_after_session_stable_delay<T, F, Fut>(
+    guard: crate::session::epoch::SessionGuard,
+    op: F,
+) -> Option<T>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = T>,
+{
+    if !guard.is_current() {
+        return None;
+    }
+    sleep_ms(config::nudge::RETRY_DELAY_MS).await;
+    if !guard.is_current() {
+        return None;
+    }
+    Some(op().await)
+}
+
+/// Pure exponential-backoff delay: `base_ms * 2^attempt_index`, shifted with
+/// saturating semantics, capped at `cap_ms` when given. One shared formula for
+/// every retry schedule in the crate — schedules differ only in their base,
+/// cap, and attempt indexing, which stay at the call sites (`sync/queue_policy.rs`,
+/// `chat/signal/routes/mod.rs`, `app/retry.rs`).
+#[must_use]
+pub fn exponential_backoff_ms(attempt_index: u32, base_ms: u64, cap_ms: Option<u64>) -> u64 {
+    // 2^63 already overflows any millisecond budget; shifting past 62 saturates.
+    let shifted = base_ms.saturating_mul(1_u64 << attempt_index.min(62));
+    cap_ms.map_or(shifted, |cap| shifted.min(cap))
+}
+
 /// Platform-agnostic milliseconds since Unix epoch.
 /// `js_sys::Date::now()` is f64 milliseconds since the epoch; JS has no
 /// integer epoch API, so the f64→u64 conversion is the conversion itself.

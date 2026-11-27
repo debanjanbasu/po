@@ -97,7 +97,7 @@ pub async fn finalize_admission_ui(
         clear_pending_admission_effects();
         return AdmissionUi::Superseded;
     }
-    match admit_user(user).await {
+    match Box::pin(admit_user(user)).await {
         Ok(()) => AdmissionUi::Admitted,
         Err(error) => {
             report_nonfatal(domain, context, error);

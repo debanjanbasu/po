@@ -9,7 +9,7 @@
 // so outputs are checked in and injected per platform:
 //   - web:     assets/favicon.ico + assets/logo.svg (document::Link)
 //   - iOS:     assets/icons/ios/*.png copied into the .app by
-//              scripts/ios-device-deploy.sh; CFBundleIcons in native/apple/Info.ios.plist
+//              scripts/fix-bundle-case.sh; CFBundleIcons in native/apple/Info.ios.plist
 //   - macOS:   assets/icons/icon.icns copied by scripts/fix-bundle-case.sh;
 //              CFBundleIconFile in native/apple/Info.macos.plist
 //   - Android: assets/icons/android/ vector drawables copied over the

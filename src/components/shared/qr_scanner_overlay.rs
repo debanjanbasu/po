@@ -1,7 +1,8 @@
-// NOTE: This file is intentionally kept as a single module (~313 LOC) because
-// it is a single component (QrScannerOverlay) with platform-conditional logic
-// (#[cfg] blocks for wasm32 vs native). Splitting by platform would duplicate
-// the component signature and complicate the cfg gating.
+// NOTE: This file is one component (QrScannerOverlay) with two cfg-gated
+// branches — wasm (getUserMedia camera + rqrr/BarcodeDetector decode, in
+// this file) and native (platform FFI scan; the render half lives in
+// `qr_scanner_overlay_native.rs`). The component body and its shared
+// orchestration stay here so the cfg gating keeps a single signature.
 
 //! Fullscreen camera QR scanner overlay.
 //!
@@ -12,10 +13,7 @@ use std::rc::Rc;
 
 use dioxus::prelude::*;
 
-use crate::{helpers::spawn, platform::qr_scanner};
-
-#[cfg(not(target_arch = "wasm32"))]
-use crate::components::shared::{Spinner, SpinnerSize};
+use crate::platform::qr_scanner;
 
 #[cfg(target_arch = "wasm32")]
 use crate::helpers::async_utils::sleep_ms;
@@ -39,33 +37,6 @@ const DECODE_INTERVAL_MS: u64 = 250;
 const VIDEO_ELEMENT_ID: &str = "po-qr-video";
 #[cfg(target_arch = "wasm32")]
 const CANVAS_ELEMENT_ID: &str = "po-qr-canvas";
-#[cfg(not(target_arch = "wasm32"))]
-fn render_native_overlay(
-    mut cancel_btn: Signal<Option<Rc<MountedData>>>,
-    cancel_click: impl FnMut(MouseEvent) + Copy + 'static,
-    cancel_key: impl FnMut(KeyboardEvent) + Copy + 'static,
-) -> Element {
-    rsx! {
-        div {
-            class: "fixed inset-0 z-[1200] bg-black/80 grid place-items-center",
-            role: "dialog",
-            "aria-modal": "true",
-            onkeydown: cancel_key,
-            tabindex: "0",
-            autofocus: true,
-            div { class: "flex flex-col items-center gap-4",
-                Spinner { size: SpinnerSize::Lg, class: "text-white" }
-                p { class: "text-white", "Camera scanner active…" }
-                button {
-                    class: "btn",
-                    onmounted: move |ev| cancel_btn.set(Some(ev.data())),
-                    onclick: cancel_click,
-                    "Cancel"
-                }
-            }
-        }
-    }
-}
 
 #[cfg(target_arch = "wasm32")]
 fn render_wasm_error_overlay(
@@ -265,6 +236,7 @@ fn stop_stream_tracks(stream: Signal<Option<MediaStream>>) {
     }
 }
 
+/// Refocuses the Cancel button when Tab would otherwise leave the overlay.
 fn focus_mounted_button(cancel_btn: Signal<Option<Rc<MountedData>>>) {
     if let Some(btn) = cancel_btn.read().clone() {
         spawn(async move {
@@ -273,6 +245,8 @@ fn focus_mounted_button(cancel_btn: Signal<Option<Rc<MountedData>>>) {
     }
 }
 
+/// Overlay key handler: Tab is trapped onto the Cancel button, Escape
+/// cancels the scan.
 fn make_cancel_key(
     cancel_btn: Signal<Option<Rc<MountedData>>>,
     mut cancel: impl FnMut() + Copy + 'static,
@@ -286,6 +260,7 @@ fn make_cancel_key(
         }
     }
 }
+
 /// Fullscreen camera overlay that scans for QR codes.
 ///
 /// Calls `on_result(Some(decoded_string))` on success, or `on_result(None)` on
@@ -310,6 +285,8 @@ pub fn QrScannerOverlay(on_result: EventHandler<Option<String>>) -> Element {
     // On native targets, delegate to the existing FFI scanner immediately.
     #[cfg(not(target_arch = "wasm32"))]
     {
+        use crate::components::shared::qr_scanner_overlay_native::render_native_overlay;
+
         let mut done = use_signal(|| false);
 
         use_resource(move || async move {

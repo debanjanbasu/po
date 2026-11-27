@@ -27,10 +27,13 @@ pub(super) const NONCE_LEN: usize = 24;
 #[error("malformed stored user row: {0}")]
 pub struct MalformedUserRow(pub &'static str);
 
-pub const CURRENT_CRYPTO_VERSION: u32 = 2;
+/// The local account crypto scheme version. Initial version — the app is
+/// unreleased, so there is no history to carry.
+pub const CURRENT_CRYPTO_VERSION: u32 = 1;
 
 /// Current schema version for the `User` Cap'n Proto struct.
-pub(super) const USER_SCHEMA_VERSION: u32 = 2;
+/// Current schema version for the `User` Cap'n Proto struct. Initial version.
+pub(super) const USER_SCHEMA_VERSION: u32 = 1;
 
 /// Immutable identity fields set at signup.
 #[derive(Clone, Debug, Default)]

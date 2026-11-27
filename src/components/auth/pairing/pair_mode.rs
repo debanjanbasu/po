@@ -8,7 +8,10 @@ use dioxus::{logger::tracing::warn, prelude::*};
 use crate::{
     components::{
         auth::{AdmissionUi, finalize_admission_ui, use_countdown, use_latest_attempt_controller},
-        shared::{QrAcquireButtons, Spinner, SpinnerSize, use_form_field_manual},
+        shared::{
+            AutoSubmitGate, QrAcquireButtons, RetryButton, Spinner, SpinnerSize, apply_form_input,
+            use_form_field_manual,
+        },
     },
     config::{e2e, validation::PAIRING_PIN_EXACT_LEN},
     helpers::{async_utils::sleep_ms, spawn},
@@ -58,7 +61,7 @@ pub(super) fn PairModeSection() -> Element {
     let mut remember_me = use_signal(|| true);
     let mut scan_error = use_signal(|| None::<Cow<'static, str>>);
     let mut pair_error = use_signal(|| None::<Cow<'static, str>>);
-    let mut last_pair_attempt = use_signal(|| None::<(String, String, String)>);
+    let pair_gate = AutoSubmitGate::<(String, String, String)>::use_gate();
     let mut cooldown_remaining = use_countdown(0);
     let cooldown_expired = use_memo(move || cooldown_remaining() == 0);
     let pair_attempt = use_latest_attempt_controller();
@@ -99,10 +102,9 @@ pub(super) fn PairModeSection() -> Element {
             return;
         }
         let inputs = ((payload.value)(), (pin.value)(), (password.value)());
-        if last_pair_attempt.read().as_ref() == Some(&inputs) {
+        if !pair_gate.claim(inputs.clone()) {
             return;
         }
-        last_pair_attempt.set(Some(inputs.clone()));
         let attempt = PairAttempt {
             payload: inputs.0,
             pin: inputs.1,
@@ -183,15 +185,18 @@ pub(super) fn PairModeSection() -> Element {
                             *e2e_retries.write() += 1;
                             spawn(async move {
                                 sleep_ms(E2E_PAIR_RETRY_WAIT_MS).await;
-                                let unchanged = last_pair_attempt.read().as_ref().is_some_and(
-                                    |(p, cur_pin, cur_pw)| {
-                                        *p == attempt.payload
-                                            && *cur_pin == attempt.pin
-                                            && *cur_pw == attempt.password
-                                    },
-                                );
+                                let unchanged =
+                                    pair_gate.peek().is_some_and(|(p, cur_pin, cur_pw)| {
+                                        p == attempt.payload
+                                            && cur_pin == attempt.pin
+                                            && cur_pw == attempt.password
+                                    });
                                 if unchanged {
-                                    last_pair_attempt.set(None);
+                                    pair_gate.release(Some(&(
+                                        attempt.payload.clone(),
+                                        attempt.pin.clone(),
+                                        attempt.password.clone(),
+                                    )));
                                 }
                             });
                         }
@@ -212,12 +217,8 @@ pub(super) fn PairModeSection() -> Element {
         if !unchanged {
             reset_pair_state(scan_error, pair_error, pair_attempt);
         }
-        if last_pair_attempt
-            .peek()
-            .as_ref()
-            .is_some_and(|(p, _, _)| p != &normalized)
-        {
-            last_pair_attempt.set(None);
+        if pair_gate.peek().is_some_and(|(p, _, _)| p != normalized) {
+            pair_gate.clear();
         }
         payload.value.set(normalized);
         payload.is_dirty.set(true);
@@ -279,17 +280,12 @@ pub(super) fn PairModeSection() -> Element {
                 pattern: "[0-9]*",
                 value: "{pin.value}",
                 oninput: move |ev| {
-                    reset_pair_state(scan_error, pair_error, pair_attempt);
-                    let next = ev.value();
-                    if last_pair_attempt
-                        .peek()
-                        .as_ref()
-                        .is_some_and(|(_, cur_pin, _)| cur_pin != &next)
-                    {
-                        last_pair_attempt.set(None);
-                    }
-                    pin.value.set(next);
-                    pin.is_dirty.set(true);
+                    apply_form_input(pin, ev.value(), |next| {
+                        reset_pair_state(scan_error, pair_error, pair_attempt);
+                        if pair_gate.peek().is_some_and(|(_, cur_pin, _)| cur_pin != next) {
+                            pair_gate.clear();
+                        }
+                    });
                 },
             }
             if (pin.error)().is_some() && !pin.value.read().is_empty() {
@@ -313,17 +309,12 @@ pub(super) fn PairModeSection() -> Element {
                 maxlength: 256,
                 value: "{password.value}",
                 oninput: move |ev| {
-                    reset_pair_state(scan_error, pair_error, pair_attempt);
-                    let next = ev.value();
-                    if last_pair_attempt
-                        .peek()
-                        .as_ref()
-                        .is_some_and(|(_, _, cur_pw)| cur_pw != &next)
-                    {
-                        last_pair_attempt.set(None);
-                    }
-                    password.value.set(next);
-                    password.is_dirty.set(true);
+                    apply_form_input(password, ev.value(), |next| {
+                        reset_pair_state(scan_error, pair_error, pair_attempt);
+                        if pair_gate.peek().is_some_and(|(_, _, cur_pw)| cur_pw != next) {
+                            pair_gate.clear();
+                        }
+                    });
                 },
             }
             if (password.error)().is_some() && !password.value.read().is_empty() {
@@ -341,7 +332,7 @@ pub(super) fn PairModeSection() -> Element {
                 "aria-label": "Remember on this device",
                 oninput: move |ev| {
                     reset_pair_state(scan_error, pair_error, pair_attempt);
-                    last_pair_attempt.set(None);
+                    pair_gate.clear();
                     remember_me.set(ev.checked());
                 },
             }
@@ -368,16 +359,14 @@ pub(super) fn PairModeSection() -> Element {
 
         if let Some(err) = pair_error() {
             div { class: "text-center text-error", role: "alert", aria_live: "assertive", "{err}" }
-            if last_pair_attempt().as_ref().is_some_and(|(p, cur_pin, cur_pw)| {
-                p == payload.value.read().as_str()
-                    && cur_pin == pin.value.read().as_str()
-                    && cur_pw == password.value.read().as_str()
+            if pair_gate.peek().is_some_and(|(p, cur_pin, cur_pw)| {
+                p == *payload.value.read()
+                    && cur_pin == *pin.value.read()
+                    && cur_pw == *password.value.read()
             }) {
-                button {
-                    class: "btn btn-ghost btn-xs mx-auto",
-                    r#type: "button",
-                    onclick: move |_| last_pair_attempt.set(None),
-                    "Retry"
+                RetryButton {
+                    class: "btn-xs mx-auto",
+                    onclick: move |()| pair_gate.clear(),
                 }
             }
         }

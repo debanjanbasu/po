@@ -35,7 +35,7 @@ pub(super) enum ResyncScope {
 /// records) from the DHT, merged into local state. No-op when no session
 /// is active.
 pub async fn resync_identity() {
-    resync_with_scope(ResyncScope::Full).await;
+    Box::pin(resync_with_scope(ResyncScope::Full)).await;
 }
 
 /// Scoped identity resync — see [`ResyncScope`] for what each level pulls.
@@ -76,13 +76,13 @@ pub(super) async fn resync_with_scope(scope: ResyncScope) -> bool {
 
             let mut any_child_changed = false;
             if scope != ResyncScope::Core {
-                any_child_changed = pull_identity_children(
+                any_child_changed = Box::pin(pull_identity_children(
                     &ctx,
                     &user_key,
                     &identity.secret,
                     &identity.keypair,
                     guard,
-                )
+                ))
                 .await;
 
                 if scope == ResyncScope::Full
@@ -147,18 +147,18 @@ pub async fn handle_sync_nudge(scope: u8) {
     let guard = session::SessionGuard::capture();
     sleep_ms(config::nudge::RETRY_DELAY_MS).await;
     if guard.is_current() {
-        pull_nudged_scopes(scope).await;
+        Box::pin(pull_nudged_scopes(scope)).await;
     }
 }
 
 /// Pulls each scope named by `scope` bits; returns whether anything changed.
 async fn pull_nudged_scopes(scope: u8) -> bool {
     if scope & config::nudge::SCOPE_FULL != 0 {
-        return resync_with_scope(ResyncScope::Full).await;
+        return Box::pin(resync_with_scope(ResyncScope::Full)).await;
     }
     let mut changed = false;
     if scope & config::nudge::SCOPE_CORE != 0 {
-        changed |= resync_with_scope(ResyncScope::Core).await;
+        changed |= Box::pin(resync_with_scope(ResyncScope::Core)).await;
     }
     if scope & config::nudge::SCOPE_TOTP != 0 {
         changed |= pull_child_for_feature("totp").await;

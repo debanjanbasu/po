@@ -30,7 +30,7 @@ mod routes_remote;
 mod routes_send;
 
 pub use routes_remote::{clear_route_cache, evict_routes_for_identity};
-pub use routes_send::{prepare_signal_bytes, send_prepared_signal_excluding, send_signal_as};
+pub use routes_send::{prepare_signal_bytes, send_signal_as};
 pub(super) use routes_send::{prepare_signal_bytes_as, send_prepared_signal};
 
 struct LocalRoute {
@@ -155,7 +155,6 @@ pub fn publish_local_route() {
 async fn publish_with_retry() {
     let session = SessionGuard::capture();
     let max_attempts = config::route::PUBLISH_MAX_ATTEMPTS;
-    let mut delay_ms = config::route::PUBLISH_RETRY_BASE_MS;
 
     for attempt in 1..=max_attempts {
         if !session.is_current() {
@@ -166,6 +165,12 @@ async fn publish_with_retry() {
             Err(failure) => failure,
         };
         if attempt < max_attempts {
+            // attempt is 1-based; the retry after attempt N waits base*2^(N-1).
+            let delay_ms = crate::helpers::async_utils::exponential_backoff_ms(
+                attempt.saturating_sub(1),
+                config::route::PUBLISH_RETRY_BASE_MS,
+                None,
+            );
             match &failure {
                 PublishFailure::CreateRoute(e) | PublishFailure::WriteDht(e) => debug!(
                     "Route publish attempt {attempt}/{max_attempts} failed; retrying in {delay_ms}ms: {e:#}"
@@ -175,7 +180,6 @@ async fn publish_with_retry() {
                 ),
             }
             sleep_ms(delay_ms).await;
-            delay_ms = delay_ms.saturating_mul(2);
             continue;
         }
         match failure {

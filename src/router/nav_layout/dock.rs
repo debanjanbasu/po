@@ -168,6 +168,10 @@ fn NavItem(
                 class: "absolute inset-0 select-none",
                 to: nav_item_data.route,
                 active_class: "dock-active",
+                // Stable hook for e2e/automation: the dock link is an
+                // absolutely-positioned overlay, so the stable selector is
+                // the href, not a text/id of the link itself.
+                id: "po-dock-{nav_item_data.id:?}",
                 // The visible label is a sibling of this absolutely-positioned
                 // link, so the `a` itself has no content to take a name from.
                 // `aria-current` is supplied by `Link` itself (`href == current`.

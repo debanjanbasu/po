@@ -183,16 +183,22 @@ export async function run(ctx: RunContext, surfaces: Surface[]): Promise<void> {
   );
 
   // B → A.
+  // Baseline the counts first: direction 1 already emitted message_sent /
+  // message_received, and a bare waitForSignal would match those stale lines
+  // even if direction 2 silently no-opped (same pattern as S5's restart leg).
+  const betaSentBefore = countMarker(beta.surface.logs(beta.peer), 'message_sent');
+  const alphaReceivedBefore = countMarker(alpha.surface.logs(alpha.peer), 'message_received');
   const toAlpha = 'e2e-s3-hello-from-beta';
   await alpha.surface.openConversation?.(alpha.peer, 'e2e-s3-beta', BUDGET);
   await beta.surface.openConversation?.(beta.peer, alphaIdentity.username, BUDGET);
   await beta.surface.sendMessage?.(beta.peer, toAlpha, BUDGET);
 
-  const betaSent = await waitForSignal(
+  const betaSent = await waitMarkerCount(
     ctx,
-    beta.surface,
-    beta.peer,
-    { label: 'message sent (beta)', marker: 'message_sent' },
+    beta,
+    'message_sent',
+    betaSentBefore + 1,
+    'message sent (beta)',
     BUDGET,
   );
   const betaMsgId = betaSent.fields['msg_id'];
@@ -211,11 +217,12 @@ export async function run(ctx: RunContext, surfaces: Surface[]): Promise<void> {
       `the delivered marker names another message: ${ctx.mask(betaDelivered.fields['msg_id'] ?? '(none)')}`,
     );
   }
-  const alphaReceived = await waitForSignal(
+  const alphaReceived = await waitMarkerCount(
     ctx,
-    alpha.surface,
-    alpha.peer,
-    { label: 'message received (alpha)', marker: 'message_received' },
+    alpha,
+    'message_received',
+    alphaReceivedBefore + 1,
+    'message received (alpha)',
     BUDGET,
   );
   if (alphaReceived.fields['msg_id'] !== betaMsgId) {

@@ -14,7 +14,7 @@ use crate::{
             MessagePage, MessageStatus, ParticipantFeedMeta, message_seq_bounds,
             normalize_remote_messages, union_messages_in_place,
         },
-        manifest::{ConversationRoster, MemberStatus},
+        manifest::ConversationRoster,
         storage::{LocalConversation, load_for_account, mutate_for_account},
     },
     helpers::spawn_blocking,
@@ -132,9 +132,7 @@ pub async fn sync_conv_feed(op: &PendingOperation, ctx: &IdentityContext) -> Res
     let member_index = c
         .conv
         .roster
-        .members
-        .iter()
-        .position(|m| m.identity_key == my_identity_key && m.status == MemberStatus::Active)
+        .my_member_index(my_identity_key, true)
         .context("Not an active conversation member")?;
     let feed_subkey = member_feed_subkey(member_index);
     let record_key = c.record_key;

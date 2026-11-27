@@ -72,9 +72,9 @@ export async function run(ctx: RunContext, surfaces: Surface[]): Promise<void> {
   const openSnapshots = async (): Promise<void> => {
     await dom(peerId, [{ waitFor: ['#po-main-dock', BUDGET] }]);
     await dom(peerId, [
-      { click: 'a[href="/account"]' },
-      { waitFor: ['a[href="/account/snapshots"]', BUDGET] },
-      { click: 'a[href="/account/snapshots"]' },
+      { click: '#po-dock-Account' },
+      { waitFor: ['#settings-link-snapshots', BUDGET] },
+      { click: '#settings-link-snapshots' },
       // The create button lives inside the collapsed "Snapshot History" body,
       // so it resolves in the DOM but has no box until the summary is opened.
       { waitFor: ['details.collapse summary', BUDGET] },
@@ -90,9 +90,9 @@ export async function run(ctx: RunContext, surfaces: Surface[]): Promise<void> {
    */
   const gotoSnapshots = async (): Promise<void> => {
     await dom(peerId, [
-      { click: '#po-main-dock a[href="/account"]' },
-      { waitFor: ['a[href="/account/snapshots"]', BUDGET] },
-      { click: 'a[href="/account/snapshots"]' },
+      { click: '#po-dock-Account' },
+      { waitFor: ['#settings-link-snapshots', BUDGET] },
+      { click: '#settings-link-snapshots' },
       { waitFor: ['#snapshots-export-button', BUDGET] },
     ]);
   };
@@ -100,7 +100,7 @@ export async function run(ctx: RunContext, surfaces: Surface[]): Promise<void> {
   /** Dock → Authenticator, where the post-export change is made and read. */
   const openTotp = async (): Promise<void> => {
     await dom(peerId, [
-      { click: '#po-main-dock a[href="/totp"]' },
+      { click: '#po-dock-Totp' },
       { waitFor: ['#totp-uri-input', BUDGET] },
     ]);
   };

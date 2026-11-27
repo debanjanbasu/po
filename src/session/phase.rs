@@ -130,7 +130,7 @@ pub async fn complete_admission(user: User) -> Result<()> {
     // Apply staged admission effects (remember-me, pairing) BEFORE setting
     // navigation-triggering signals. Uses epoch-only guard since SESSION is
     // not yet in Authenticated state.
-    let paired = match apply_pending_admission_effects(&user, &guard).await {
+    let paired = match Box::pin(apply_pending_admission_effects(&user, &guard)).await {
         Ok(paired) => paired,
         Err(error) => {
             clear_installed_crypto();

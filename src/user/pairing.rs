@@ -200,7 +200,14 @@ fn post_pairing_hydration(account_id: Arc<str>, dht_key: RecordKey, run: Pairing
         );
 
         pairing_sync_status::set_stage(run.status_run, PairingSyncStage::ChildRecords);
-        pull_identity_children(&ctx, &dht_key, &identity.secret, &identity.keypair, guard).await;
+        Box::pin(pull_identity_children(
+            &ctx,
+            &dht_key,
+            &identity.secret,
+            &identity.keypair,
+            guard,
+        ))
+        .await;
 
         pairing_sync_status::set_stage(run.status_run, PairingSyncStage::Conversations);
         let conversations_hydrated = hydrate_paired_conversations(&ctx, guard).await;
@@ -505,7 +512,7 @@ pub(super) async fn apply_pending_device_login(user: &User, guard: &SessionGuard
     };
 
     pairing_sync_status::set_stage(run.status_run, PairingSyncStage::AppState);
-    if let Err(e) = store_paired_user(user, &app_state, &identity_docs, guard).await {
+    if let Err(e) = Box::pin(store_paired_user(user, &app_state, &identity_docs, guard)).await {
         if guard.is_current() {
             *recover_poison(PENDING_DEVICE_LOGIN.lock()) = Some(PendingDeviceLogin {
                 username: user.username_arc(),
@@ -586,12 +593,12 @@ async fn store_paired_user(
     nonfatal!(
         "user.pairing",
         "Failed to seed local identity docs from pulled identity record",
-        identity_doc::seed_docs(
+        Box::pin(identity_doc::seed_docs(
             user.account_id(),
             identity_docs.profile.as_ref(),
             identity_docs.security.as_ref(),
             identity_docs.app_state.as_ref(),
-        )
+        ))
         .await
     );
     Ok(())

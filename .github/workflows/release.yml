@@ -1,9 +1,10 @@
 # Normal optimized builds until a representative, bounded PGO workload exists.
 # Verification inspects artifacts; it never starts the GUI or runs tests.
-# No production pepper is supplied. The desktop legs are unsigned CI build artifacts,
-# not install-ready releases. The android leg is the exception: it is signed with a
-# release identity that exists only in the `release` environment (see that job), so
-# its APK is installable — publishing still requires a separate trusted flow.
+# No signing material is supplied to the desktop legs. They are unsigned CI
+# build artifacts, not install-ready releases. The android leg is the
+# exception: it is signed with a release identity that exists only in the
+# `release` environment (see that job), so its APK is installable — publishing
+# still requires a separate trusted flow.
 name: Release build verification
 
 on:
@@ -30,15 +31,7 @@ jobs:
     name: Release (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
-    # The pepper is derivation material for every password hash and for the DHT
-    # secret, so it is baked at build time and must never change once data
-    # exists. Without it the build reports `unprovisioned` and the artifacts are
-    # verification-only; with it they interoperate with the app's real data. The
-    # environment also gives the value protection rules instead of exposing it
-    # to every workflow in the repository.
     environment: release
-    env:
-      PO_APP_PEPPER: ${{ secrets.PO_APP_PEPPER }}
     defaults:
       run:
         shell: bash
@@ -77,6 +70,15 @@ jobs:
 
       - name: Install the repository Rust toolchain
         run: bash scripts/ci-setup-rust.sh --target '${{ matrix.target }}'
+
+      # Warm Cargo cache for the release artifact build; keyed per matrix
+      # target so each leg's cross-compile graph stays its own.
+      - name: Cache Cargo build artifacts
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: release-${{ matrix.target }}
+          cache-all-crates: true
+
       # Upstream's Windows tools archive is Win32; ARM64 runs capnp under emulation.
       - name: Install Cap'n Proto compiler on Windows
         if: runner.os == 'Windows'
@@ -142,63 +144,6 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Record application pepper provisioning state
-        shell: bash
-        run: |
-          set -euo pipefail
-          pepper=''
-          if [[ -n "${PO_APP_PEPPER:-}" ]]; then
-            pepper="$PO_APP_PEPPER"
-          elif [[ -f .env ]]; then
-            while IFS= read -r line || [[ -n "$line" ]]; do
-              key="${line%%=*}"
-              key="${key#"${key%%[![:space:]]*}"}"
-              key="${key%"${key##*[![:space:]]}"}"
-              if [[ "$key" == 'PO_APP_PEPPER' ]]; then
-                value="${line#*=}"
-                value="${value%"${value##*[![:space:]]}"}"
-                value="${value#\"}"; value="${value%\"}"
-                value="${value#\'}"; value="${value%\'}"
-                pepper="$value"
-                break
-              fi
-            done < .env
-          fi
-
-          if [[ -n "$pepper" ]]; then
-            printf '%s' "$pepper" | node -e '
-              let data = "";
-              process.stdin.setEncoding("utf8");
-              process.stdin.on("data", (chunk) => { data += chunk; });
-              process.stdin.on("end", () => {
-                const value = data.trim();
-                const decoded = /^[A-Za-z0-9+/]+={0,2}$/.test(value)
-                  ? Buffer.from(value, "base64")
-                  : Buffer.alloc(0);
-                const canonical = decoded.length > 0
-                  && (decoded.toString("base64") === value
-                    || decoded.toString("base64").replace(/=+$/, "") === value.replace(/=+$/, ""));
-                if (!canonical) {
-                  console.error("PO_APP_PEPPER is set but is not valid non-empty base64.");
-                  process.exit(1);
-                }
-              });
-            '
-            status=provisioned
-          else
-            status=unprovisioned
-          fi
-
-          echo "PO_PEPPER_STATUS=$status" >> "$GITHUB_ENV"
-          {
-            echo "Application pepper: $status"
-            if [[ "$status" == 'unprovisioned' ]]; then
-              echo "Artifact is unprovisioned: no application pepper was compiled in."
-            else
-              echo "Artifact was compiled with a supplied application pepper."
-            fi
-          } | tee -a "$GITHUB_STEP_SUMMARY"
-
       - name: Compile the locked stylesheet
         run: |
           npm ci --no-audit --no-fund
@@ -249,6 +194,9 @@ jobs:
           echo "DX_BIN=$dx_bin" >> "$GITHUB_ENV"
 
       # The locked Tailwind release only ships a Windows x64 standalone; ARM uses x64 emulation until upstream provides ARM64.
+      # The locked dx resolves Tailwind via which() under NO_DOWNLOADS=1, so
+      # the downloaded exe just needs to be on PATH (dx's TAILWIND_BIN
+      # override, if the runner ever needs a different binary, is honored too).
       - name: Use the locked Tailwind CLI for Windows packaging
         if: runner.os == 'Windows'
         env:
@@ -257,8 +205,8 @@ jobs:
           version="$(node -p "require('./package-lock.json').packages['node_modules/@tailwindcss/cli'].version")"
           gh release download "v$version" --repo tailwindlabs/tailwindcss \
             --pattern tailwindcss-windows-x64.exe --dir "$RUNNER_TEMP/tailwind"
-          TAILWIND_BIN="$RUNNER_TEMP/tailwind/tailwindcss-windows-x64.exe" \
-            bash scripts/dx-tailwind-link.sh
+          echo "$RUNNER_TEMP/tailwind" >> "$GITHUB_PATH"
+          echo "TAILWIND_BIN=$RUNNER_TEMP/tailwind/tailwindcss-windows-x64.exe" >> "$GITHUB_ENV"
 
       - name: Bundle the Windows NSIS installer
         if: runner.os == 'Windows'
@@ -325,21 +273,12 @@ jobs:
           fi
           {
             echo "Compile/package verification only; no runtime or PGO validation."
-            if [[ "$PO_PEPPER_STATUS" == 'unprovisioned' ]]; then
-              echo "Unprovisioned artifact: no production pepper or signing material was supplied."
-            fi
             echo "Linux/macOS archives are raw binaries, not asset-complete app bundles."
             echo "Commit: $GITHUB_SHA"
             echo "Toolchain: $RUSTUP_TOOLCHAIN"
             echo "Target: ${{ matrix.target }}"
             echo "Verified payload: $app_dir/${{ matrix.binary }}"
             echo "Rust CPU flags: $cpu_flags"
-            echo "Application pepper: $PO_PEPPER_STATUS"
-            if [[ "$PO_PEPPER_STATUS" == 'unprovisioned' ]]; then
-              echo "Application pepper provisioning: unprovisioned (no pepper compiled in)."
-            else
-              echo "Application pepper provisioning: provisioned from the supplied value."
-            fi
             rustc --version --verbose
             cargo --version
           } > 'target/release-artifacts/po-${{ matrix.target }}-build.txt'
@@ -374,8 +313,6 @@ jobs:
     runs-on: ubuntu-26.04-arm
     timeout-minutes: 180
     environment: release
-    env:
-      PO_APP_PEPPER: ${{ secrets.PO_APP_PEPPER }}
     defaults:
       run:
         shell: bash
@@ -387,6 +324,14 @@ jobs:
 
       - name: Install the repository Rust toolchain
         run: bash scripts/ci-setup-rust.sh --target aarch64-linux-android
+
+      # Warm Cargo cache for the release APK build (the job's longest cold
+      # step), mirroring the e2e-android key.
+      - name: Cache Cargo build artifacts
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: release-android
+          cache-all-crates: true
 
       - name: Install Android C build dependencies
         run: |
@@ -427,13 +372,6 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           ./node_modules/.bin/tailwindcss --input tailwind.css --output assets/tailwind.css --minify
-
-      - name: Record application pepper provisioning state
-        # The strict non-empty-base64 check lives in the desktop job; this leg
-        # only records whether a pepper was supplied for the APK's build.
-        run: |
-          if [[ -n "${PO_APP_PEPPER:-}" ]]; then status=provisioned; else status=unprovisioned; fi
-          echo "Application pepper: $status" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Provision release signing, run time only
         env:

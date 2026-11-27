@@ -2,9 +2,7 @@
 
 use crate::{
     helpers::{
-        encryption::{
-            PasswordHashForm, crypto_system, derive_dht_secret_from_hash, hash_password_for_account,
-        },
+        encryption::{crypto_system, derive_dht_secret_from_hash, hash_password_for_account},
         store_lock::lock_store,
     },
     nonfatal,
@@ -100,38 +98,31 @@ async fn do_login(mut user: User, password_hash: &[u8]) -> Result<User, LoginRes
     Ok(user)
 }
 
-/// Opens `user` with `password`, trying the account-ID salt first and the
-/// pepper salt second.
+/// Opens `user` with `password`, hashing it with the account ID as salt.
 ///
-/// An account created before the account-ID salt derives its DHT secret from the
-/// pepper-salted hash; its keypair is the oracle for which form it used, and
-/// rehashing it as the new form would re-derive that secret and strand
-/// everything the account has published. Returns the credential hash that opened
-/// it (callers reuse it for remember-me staging) with its salt form.
+/// There is exactly one salt form — the account's 16-byte ID — so a single
+/// hash attempt opens the account. Returns the credential hash that opened
+/// it (callers reuse it for remember-me staging).
 pub(in crate::user) async fn login_with_password(
     user: User,
     password: &str,
-) -> Result<(User, Zeroizing<String>, PasswordHashForm), LoginResult> {
-    for form in PasswordHashForm::NEWEST_FIRST {
-        let hash = Zeroizing::new(
-            form.hash(password, user.account_id())
-                .await
-                .map_err(LoginResult::Other)?,
-        );
-        match do_login(user.clone(), hash.as_bytes()).await {
-            Err(LoginResult::Incorrect) => {}
-            Ok(login) => return Ok((login, hash, form)),
-            Err(err) => return Err(err),
-        }
+) -> Result<(User, Zeroizing<String>), LoginResult> {
+    let hash = Zeroizing::new(
+        hash_password_for_account(password, user.account_id())
+            .await
+            .map_err(LoginResult::Other)?,
+    );
+    match do_login(user.clone(), hash.as_bytes()).await {
+        Ok(login) => Ok((login, hash)),
+        Err(err) => Err(err),
     }
-    Err(LoginResult::Incorrect)
 }
 
 /// Checks whether the given credentials match a stored user.
 pub async fn check_credentials(username: &str, password: &str) -> Result<AuthOutcome> {
     let result = async {
         let user = load_user(username).await?.ok_or(LoginResult::NotFound)?;
-        let (mut user, password_hash, _) = login_with_password(user, password).await?;
+        let (mut user, password_hash) = login_with_password(user, password).await?;
         user.runtime.password_hash = Some(password_hash);
         Ok(user)
     }
@@ -146,12 +137,11 @@ pub async fn check_credentials(username: &str, password: &str) -> Result<AuthOut
 }
 
 /// Verifies `password` against the local user without mutating remember-me or
-/// session state, returning the salt form that opened the account.
+/// session state; `Ok(Some(()))` when it matches.
 ///
-/// Callers that must derive the account's DHT secret later (pairing payload
-/// generation) need the form, not the hash: a joining device cannot reproduce an
-/// account-ID-salted hash before it knows the account ID.
-pub async fn verify_password(username: &str, password: &str) -> Result<Option<PasswordHashForm>> {
+/// Every account is account-ID-salted, and a joining device reproduces that
+/// hash from the account ID carried in the pairing payload header.
+pub async fn verify_password(username: &str, password: &str) -> Result<Option<()>> {
     let Some(user) = load_user(username).await? else {
         return Ok(None);
     };
@@ -159,7 +149,7 @@ pub async fn verify_password(username: &str, password: &str) -> Result<Option<Pa
         return Ok(None);
     }
     match login_with_password(user, password).await {
-        Ok((_, _, form)) => Ok(Some(form)),
+        Ok(_) => Ok(Some(())),
         Err(LoginResult::Incorrect | LoginResult::NotFound) => Ok(None),
         Err(LoginResult::Other(err)) => Err(err),
     }

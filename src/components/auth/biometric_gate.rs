@@ -28,7 +28,7 @@ pub fn BiometricGate() -> Element {
                     SessionPhase::PendingBiometric(pending)
                         if pending.account_id() == user.account_id()
                 );
-                if is_same_admission && complete_admission(user).await.is_err() {
+                if is_same_admission && Box::pin(complete_admission(user)).await.is_err() {
                     failed.set(true);
                 }
             } else if matches!(*SESSION.peek(), SessionPhase::PendingBiometric(_)) {

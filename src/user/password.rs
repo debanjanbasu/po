@@ -63,7 +63,7 @@ pub async fn change_password(
             "Password changes require a current-crypto account"
         )));
     }
-    let (login, _, form) = super::auth::login_with_password(user.clone(), old_password)
+    let (login, _) = super::auth::login_with_password(user.clone(), old_password)
         .await
         .map_err(|_| PasswordChangeError::IncorrectPassword)?;
     let keypair = login
@@ -74,10 +74,10 @@ pub async fn change_password(
         .runtime
         .dht_secret
         .context("password login produced no DHT secret")?;
-    // Keep the account's salt form — it is the DHT-secret input, so changing it
-    // would re-derive the secret and strand everything encrypted under the old
-    // one. The new password alone still rotates the secret.
-    let new_hash = Zeroizing::new(form.hash(new_password, &ctx.account_id).await?);
+    // The new password alone rotates the secret: the hash is always
+    // account-ID-salted, so no form tracking is needed.
+    let new_hash =
+        Zeroizing::new(encryption::hash_password_for_account(new_password, &ctx.account_id).await?);
     let new_secret = encryption::derive_dht_secret_from_hash(&new_hash, &ctx.account_id).await?;
     if old_secret == new_secret {
         return Ok(());

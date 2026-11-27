@@ -10,8 +10,8 @@ use crate::{
     components::{
         settings::shell::SettingsCard,
         shared::{
-            FeedbackKind, FormFeedback, FormFieldHandle, TransientSetter, use_form_field_manual,
-            use_transient_message,
+            AutoSubmitGate, FeedbackKind, FormFeedback, FormFieldHandle, RetryButton,
+            TransientSetter, use_form_field_manual, use_transient_message,
         },
     },
     config::ui::SUCCESS_TOAST_MS as SUCCESS_FEEDBACK_MS,
@@ -29,7 +29,7 @@ pub(super) struct ChangeForm {
     /// Transient success message with its own stale-timer guard.
     success_msg: Signal<Option<String>>,
     success_set: TransientSetter,
-    last_attempt: Signal<Option<(String, String)>>,
+    submit_gate: AutoSubmitGate<(String, String)>,
     pending: Signal<bool>,
     retryable: Signal<bool>,
     can_submit: Memo<bool>,
@@ -54,7 +54,7 @@ pub(super) fn use_change_form(
         }
     });
     let feedback = use_signal(|| None);
-    let last_attempt = use_signal(|| None);
+    let submit_gate = AutoSubmitGate::<(String, String)>::use_gate();
     let pending = use_signal(|| false);
     let retryable = use_signal(|| false);
     let can_submit =
@@ -67,7 +67,7 @@ pub(super) fn use_change_form(
         feedback,
         success_msg,
         success_set,
-        last_attempt,
+        submit_gate,
         pending,
         retryable,
         can_submit,
@@ -112,10 +112,9 @@ impl ChangeForm {
             return None;
         }
         let pair = ((self.cur.value)(), (self.next.value)());
-        if self.last_attempt.read().as_ref() == Some(&pair) {
+        if !self.submit_gate.claim(pair.clone()) {
             return None;
         }
-        self.last_attempt.set(Some(pair.clone()));
         self.feedback.set(None);
         self.retryable.set(false);
         self.pending.set(true);
@@ -131,7 +130,7 @@ impl ChangeForm {
             field.value.set(String::new());
             field.is_dirty.set(false);
         }
-        self.last_attempt.set(None);
+        self.submit_gate.clear();
         self.feedback.set(None);
         self.success_msg.set(None);
         self.retryable.set(false);
@@ -183,15 +182,13 @@ pub(super) fn change_card(title: &'static str, form: &ChangeForm, fields: Elemen
                 li { class: "px-4 pb-4 pt-1",
                     FormFeedback { kind, message, compact: true }
                     if (form.retryable)() {
-                        button {
-                            class: "btn btn-ghost btn-xs mt-1",
-                            r#type: "button",
-                            onclick: move |_| {
-                                form.last_attempt.set(None);
+                        RetryButton {
+                            class: "btn-xs mt-1",
+                            onclick: move |()| {
+                                form.submit_gate.clear();
                                 form.retryable.set(false);
                                 form.feedback.set(None);
                             },
-                            "Retry"
                         }
                     }
                 }

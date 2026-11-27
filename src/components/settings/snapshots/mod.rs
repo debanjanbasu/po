@@ -3,9 +3,11 @@
 //!
 //! Accessible from Account → Data & Backups.
 
+mod delete_modal;
 mod export;
 mod import;
 mod plan;
+mod restore_modal;
 mod shared;
 
 use anyhow::{Result as AnyResult, anyhow, bail};
@@ -15,7 +17,7 @@ use crate::{
     components::{
         settings::shell::{SettingsHeader, SettingsPage},
         shared::{
-            ModalDialog, close_modal_dialog, format_binary_bytes, format_local_ymdhm_from_millis,
+            close_modal_dialog, format_binary_bytes, format_local_ymdhm_from_millis,
             format_relative_time_at, use_modal_dialog_id,
         },
     },
@@ -32,8 +34,10 @@ use crate::{
     user::ctx::UserCtx,
 };
 
+use delete_modal::RetentionConfirmModal;
 use export::ExportSection;
 use import::{ImportMergeModal, ImportPasswordModal, ImportSection};
+use restore_modal::RestoreConfirmModal;
 use shared::{
     BackupSections, ImportState, SyncSurface, create_surface_snapshot, list_surface_snapshots,
     restore_surface_snapshot,
@@ -181,6 +185,7 @@ pub fn Snapshots() -> Element {
             pending_policy,
             retention_error,
             retention_busy,
+            on_confirm: move |policy| apply_retention_policy(policy, retention_error, retention_busy),
         }
 
         ImportPasswordModal { import_dialog_id, state: import_state }
@@ -522,102 +527,6 @@ fn SnapshotHistory(
                         restore_snapshot(surface, timestamp, dialog_id).await;
                     }
                 },
-            }
-        }
-    }
-}
-
-/// Snapshot restore confirmation modal.
-#[component]
-fn RestoreConfirmModal(
-    restore_dialog_id: String,
-    mut pending_restore: Signal<Option<(SyncSurface, u64)>>,
-    restoring: Signal<bool>,
-    on_confirm: Callback<(SyncSurface, u64)>,
-) -> Element {
-    let Some((surface, timestamp)) = pending_restore() else {
-        return rsx! {};
-    };
-
-    rsx! {
-        ModalDialog {
-            dialog_id: restore_dialog_id.clone(),
-            title: "Restore snapshot?",
-            on_close: move |()| pending_restore.set(None),
-            p { class: "py-1",
-                "Restore {surface.label()} to {format_local_ymdhm_from_millis(timestamp)}?"
-                " This restores that surface's records only — for Conversations, the conversation list, not message history."
-                " The current state is captured as a new snapshot first; the restored state syncs to your other devices."
-            }
-            div { class: "modal-action flex gap-2",
-                button {
-                    class: "btn btn-sm",
-                    autofocus: true,
-                    onclick: {
-                        let dialog_id = restore_dialog_id;
-                        move |_| {
-                            close_modal_dialog(&dialog_id);
-                            pending_restore.set(None);
-                        }
-                    },
-                    "Cancel"
-                }
-                button {
-                    class: "btn btn-sm btn-warning",
-                    disabled: restoring(),
-                    onclick: move |_| on_confirm.call((surface, timestamp)),
-                    "Restore"
-                }
-            }
-        }
-    }
-}
-
-/// Retention downgrade confirmation modal.
-#[component]
-fn RetentionConfirmModal(
-    retention_dialog_id: String,
-    mut pending_policy: Signal<Option<RetentionPolicy>>,
-    retention_error: Signal<Option<String>>,
-    retention_busy: Signal<bool>,
-) -> Element {
-    if pending_policy().is_none() {
-        return rsx! {};
-    }
-
-    rsx! {
-        ModalDialog {
-            dialog_id: retention_dialog_id.clone(),
-            title: "Reduce backup retention?",
-            title_class: "text-warning",
-            on_close: move |()| pending_policy.set(None),
-            p { class: "py-1",
-                "Snapshots older than the new limit will be permanently deleted from this device."
-            }
-            div { class: "modal-action flex gap-2",
-                button {
-                    class: "btn btn-sm",
-                    autofocus: true,
-                    onclick: {
-                        let dialog_id = retention_dialog_id.clone();
-                        move |_| {
-                            close_modal_dialog(&dialog_id);
-                            pending_policy.set(None);
-                        }
-                    },
-                    "Cancel"
-                }
-                button {
-                    class: "btn btn-sm btn-warning",
-                    disabled: retention_busy(),
-                    onclick: move |_| {
-                        close_modal_dialog(&retention_dialog_id);
-                        if let Some(policy) = pending_policy.take() {
-                            apply_retention_policy(policy, retention_error, retention_busy);
-                        }
-                    },
-                    "Delete old backups"
-                }
             }
         }
     }

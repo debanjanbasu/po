@@ -27,10 +27,8 @@
 //   node scripts/dx-setup.ts --yes        # also apply the shell/registry config
 //   node scripts/dx-setup.ts --self-check # assert the platform maps, no I/O
 // Progress to stderr, exports to stdout, so `eval` stays clean. The printed block
-// and the persisted one are the same text: nothing in it is version-pinned (the
-// JDK is the first existing candidate in this script's order, the NDK is the newest
-// dir under $ANDROID_HOME/ndk — dx's rule), so toolchain updates apply to the next
-// shell without re-running this.
+// and the persisted one are the same text. The JDK and NDK resolve at shell start;
+// re-run after dx updates to refresh its versioned wasm tool directories.
 // POSIX: writes $XDG_CONFIG_HOME/po/env.sh and sources it from the startup file
 // each shell needs (zsh: .zshenv + .zprofile, since macOS /etc/zprofile's
 // path_helper reorders PATH; bash: .bashrc and .bash_profile; other: .profile).
@@ -38,14 +36,14 @@
 // winget, then `setx` for the variables plus the user PATH.
 // It asks before changing your shell/registry unless --yes is given.
 /* oxlint-disable max-lines -- one directly-run orchestrator: the sections share module state (os, env, brewPrefix, android, failures) and it is invoked as `node scripts/dx-setup.ts` / `eval "$(node scripts/dx-setup.ts)"`. */
-// Overrides via .env or environment: ANDROID_HOME, JAVA_HOME. Run from the repo
+// Overrides via environment: ANDROID_HOME, JAVA_HOME. Run from the repo
 // root (API levels come from Dioxus.toml). Not covered: emulator/AVD setup, IDE
 // extensions (dx doctor lists those), iOS simulator runtimes.
 
 import { spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, win32 } from 'node:path';
+import { dirname, join, resolve, win32 } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 
@@ -82,7 +80,7 @@ function fail(msg: string): never {
 // ── Async process helpers ───────────────────────────────────────────────────
 
 function run(cmd: string, args: string[], opts: { input?: string; quiet?: boolean; env?: NodeJS.ProcessEnv } = {}): Promise<RunResult> {
-  const { promise, resolve } = Promise.withResolvers<RunResult>();
+  const { promise, resolve: settle } = Promise.withResolvers<RunResult>();
   const child = spawn(cmd, args, { env: opts.env ?? process.env, stdio: 'pipe' });
   let stdout = '';
   let stderr = '';
@@ -91,18 +89,18 @@ function run(cmd: string, args: string[], opts: { input?: string; quiet?: boolea
     stderr += chunk.toString();
     if (opts.quiet !== true) process.stderr.write(chunk);
   });
-  child.on('error', (error) =>{  resolve({ status: -1, stdout, stderr: `${stderr}${error.message}` }); });
-  child.on('close', (status) =>{  resolve({ status: status ?? -1, stdout, stderr }); });
+  child.on('error', (error) => { settle({ status: -1, stdout, stderr: `${stderr}${error.message}` }); });
+  child.on('close', (status) => { settle({ status: status ?? -1, stdout, stderr }); });
   if (opts.input !== undefined) child.stdin?.end(opts.input);
   return promise;
 }
 
 /** Inherits stdio: for installers whose progress the user should see. */
 function runVisible(cmd: string, args: string[], opts: { env?: NodeJS.ProcessEnv } = {}): Promise<number> {
-  const { promise, resolve } = Promise.withResolvers<number>();
+  const { promise, resolve: settle } = Promise.withResolvers<number>();
   const child = spawn(cmd, args, { env: opts.env ?? process.env, stdio: 'inherit' });
-  child.on('error', () =>{  resolve(-1); });
-  child.on('close', (status) =>{  resolve(status ?? -1); });
+  child.on('error', () => { settle(-1); });
+  child.on('close', (status) => { settle(status ?? -1); });
   return promise;
 }
 
@@ -131,6 +129,19 @@ function prebuiltDir(osName: OsName): string {
   if (osName === 'darwin') return 'darwin-x86_64';
   if (osName === 'linux') return 'linux-x86_64';
   return 'windows-x86_64';
+}
+
+/** Keep the same DX_HOME fallback as the locked CLI's Workspace::dioxus_data_dir. */
+function dxHome(osName: OsName, environment: NodeJS.ProcessEnv, homeDir: string): string {
+  if (environment.DX_HOME !== undefined && environment.DX_HOME !== '') return environment.DX_HOME;
+  if (osName === 'win32') return win32.join(homeDir, '.dx');
+  return osName === 'linux'
+    ? join(environment.XDG_DATA_HOME ?? join(homeDir, '.local', 'share'), '.dx')
+    : join(homeDir, '.dx');
+}
+
+function executableName(osName: OsName, name: string): string {
+  return `${name}${osName === 'win32' ? '.exe' : ''}`;
 }
 
 /** Numeric compare of the version tail, so package ids ('platforms;android-37.2',
@@ -186,6 +197,10 @@ if (flags['self-check'] === true) {
     [sdkDefault('win32', { LOCALAPPDATA: 'C:\\Local' }, 'C:\\Users\\x') === 'C:\\Local\\Android\\Sdk', 'windows SDK default'],
     [sdkDefault('linux', {}, '/home/x') === '/home/x/Android/Sdk', 'linux SDK default'],
     [prebuiltDir('win32') === 'windows-x86_64' && win32.sep === '\\' && win32.delimiter === ';', 'windows paths'],
+    [dxHome('win32', {}, 'C:\\Users\\x') === 'C:\\Users\\x\\.dx', 'windows DX_HOME default'],
+    [dxHome('linux', {}, '/home/x') === '/home/x/.local/share/.dx', 'linux DX_HOME default'],
+    [dxHome('linux', { XDG_DATA_HOME: '/xdg' }, '/home/x') === '/xdg/.dx', 'linux XDG data home'],
+    [executableName('win32', 'wasm-bindgen') === 'wasm-bindgen.exe' && executableName('linux', 'wasm-opt') === 'wasm-opt', 'tool executable names'],
     [compareVersions('37.2', '37.1') > 0 && compareVersions('10.0.0', '9.0.0') > 0, 'numeric version order'],
     [compareVersions('platforms;android-37.2', 'platforms;android-37') > 0, 'package-id version order'],
     [newest(['1.0', '10.0', '2.0'], String) === '10.0', 'newest picks numerically'],
@@ -220,20 +235,13 @@ const os: OsName =
     ? process.platform
     : fail(`unsupported host ${process.platform}: set ANDROID_HOME/ANDROID_NDK_HOME/JAVA_HOME yourself`);
 
-// Same file the deploy scripts read; the real environment wins (Node's own rule).
-if (existsSync('.env')) {
-  try {
-    process.loadEnvFile('.env');
-  } catch (error) {
-    log(`warn: ignoring .env — ${String(error)}`);
-  }
-}
-
 const env: NodeJS.ProcessEnv = process.env;
 const home = homedir();
 const javaBinary = (jdkHome: string): string => join(jdkHome, 'bin', os === 'win32' ? 'java.exe' : 'java');
 let brewPrefix = '';
 const failures: string[] = [];
+const npmBin = resolve('node_modules', '.bin');
+let dxToolDirs: string[] = [];
 
 /** Runs one section; a section's failure never cancels its siblings. */
 async function section(name: string, body: () => Promise<void>): Promise<void> {
@@ -444,7 +452,16 @@ async function rustSetup(): Promise<void> {
   done(`components ${components.join(', ')}; targets ${targets.join(', ')}`);
 }
 
-// ── dx tooling: Tailwind slot and CLI/app revision coupling ─────────────────
+// ── dx tooling: NO_DOWNLOADS discovery and CLI/app revision coupling ────────
+
+// The locked CLI's versions: wasm-bindgen comes from this repo's Cargo.lock,
+// binaryen and esbuild are pinned by packages/dx/src/{wasm_opt,esbuild}.rs.
+const BINARYEN_VERSION = '129';
+const ESBUILD_VERSION = '0.27.3';
+const wasmBindgenVersion = (): string => {
+  const lockfile = readFileSync('Cargo.lock', 'utf8');
+  return /name = "wasm-bindgen"\r?\nversion = "([^"]+)"/u.exec(lockfile)?.[1] ?? fail('Cargo.lock does not declare wasm-bindgen');
+};
 
 async function dxTooling(): Promise<void> {
   const done = tagged('dx');
@@ -464,16 +481,49 @@ async function dxTooling(): Promise<void> {
     done(`CLI ${reported} matches Cargo.lock`);
   }
 
-  if (os === 'win32') {
-    done('Tailwind: run `npm ci` then set TAILWIND_BIN for scripts/dx-tailwind-link.sh (see its header)');
-    return;
+  // dx resolves Tailwind through which() under NO_DOWNLOADS=1. The npm package is
+  // the normal source; TAILWIND_BIN still points to a standalone native binary
+  // (Windows requires the .exe because npm's shim is not one).
+  const tools = join(dxHome(os, env, home), 'tools');
+  const bindgen = join(tools, `wasm-bindgen-${wasmBindgenVersion()}`, executableName(os, 'wasm-bindgen'));
+  const wasmOpt = join(tools, `binaryen-${BINARYEN_VERSION}`, 'bin', executableName(os, 'wasm-opt'));
+  const esbuild = join(tools, `esbuild-${ESBUILD_VERSION}`, executableName(os, 'esbuild'));
+  const tailwind = tailwindBinary();
+  assertNoDownloadsTools([bindgen, wasmOpt, esbuild, tailwind.bin]);
+
+  const expected = wasmBindgenVersion();
+  const bindgenReport = /wasm-bindgen\s+(\S+)/u.exec((await run(bindgen, ['--version'], { quiet: true })).stdout)?.[1];
+  if (bindgenReport !== expected) {
+    throw new Error(`managed wasm-bindgen is ${bindgenReport ?? 'unreadable'} at ${bindgen}; Cargo.lock requires ${expected}`);
   }
-  if (!existsSync(join('node_modules', '.bin', 'tailwindcss'))) {
-    done('Tailwind: run `npm ci && ./scripts/dx-tailwind-link.sh` so dx stops re-downloading its CLI');
-    return;
+
+  dxToolDirs = [tailwind.dir, npmBin, join(tools, `wasm-bindgen-${expected}`), join(tools, `binaryen-${BINARYEN_VERSION}`), join(tools, `esbuild-${ESBUILD_VERSION}`)].filter(
+    (dir, index, dirs) => dirs.indexOf(dir) === index,
+  );
+  done(`NO_DOWNLOADS ready: tailwind ${env.TAILWIND_BIN !== undefined && env.TAILWIND_BIN !== '' ? tailwind.bin : 'npm'}, wasm-bindgen ${expected}, binaryen ${BINARYEN_VERSION}, esbuild ${ESBUILD_VERSION}`);
+}
+
+/** The Tailwind binary dx will `which()` under NO_DOWNLOADS: an explicit
+ *  `TAILWIND_BIN` override (must be a native executable) or the npm CLI. */
+function tailwindBinary(): { bin: string; dir: string } {
+  const override = env.TAILWIND_BIN;
+  if (override === undefined || override === '') return { bin: join(npmBin, os === 'win32' ? 'tailwindcss.cmd' : 'tailwindcss'), dir: npmBin };
+  const bin = resolve(override);
+  if (!existsSync(bin)) throw new Error(`TAILWIND_BIN names a missing file: ${bin}`);
+  if (os === 'win32' && !bin.toLowerCase().endsWith('.exe')) {
+    throw new Error(`TAILWIND_BIN must name a native Windows .exe (npm's shim is not one): ${bin}`);
   }
-  const link = await run('./scripts/dx-tailwind-link.sh', [], { quiet: true });
-  done(link.status === 0 ? 'Tailwind slot linked to node_modules/.bin/tailwindcss' : `warn: dx-tailwind-link.sh failed — ${link.stderr.trim() || link.stdout.trim()}`);
+  return { bin, dir: dirname(bin) };
+}
+
+/** Every tool dx resolves via which() under NO_DOWNLOADS must exist. */
+function assertNoDownloadsTools(paths: string[]): void {
+  const missing = paths.filter((path) => !existsSync(path));
+  if (missing.length === 0) return;
+  throw new Error(
+    `NO_DOWNLOADS=1 requires these tools, but they are missing:\n  ${missing.join('\n  ')}\n` +
+      'Repair: run npm ci for the npm Tailwind CLI and install the locked dx once with downloads enabled so it creates its managed tools directory.',
+  );
 }
 
 // ── Platform extras: Xcode/xtool (macOS), WebView2 (Windows), libs (Linux) ──
@@ -592,6 +642,9 @@ function posixEnv(): string {
   return [
     '# Generated by scripts/dx-setup.ts — re-run it after toolchain updates.',
     `po_brew="\${HOMEBREW_PREFIX:-${brewPrefix || '/opt/homebrew'}}"`,
+    'po_dx=""',
+    // The versioned dx tool dirs are refreshed by re-running this script after a dx update.
+    ...dxToolDirs.map((dir) => `po_dx="\${po_dx:+\${po_dx}:}${shorten(dir)}"`),
     `export ANDROID_HOME="${shorten(sdk)}"`,
     'export ANDROID_SDK_ROOT="$ANDROID_HOME"',
     'po_ndk="$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | LC_ALL=C sort | tail -1)"',
@@ -601,14 +654,16 @@ function posixEnv(): string {
     '  if [ -x "$po_c/bin/java" ]; then po_jdk="$po_c"; break; fi',
     'done',
     '[ -n "$po_jdk" ] && export JAVA_HOME="$po_jdk"',
+    // The locked dx uses which() for Tailwind and the wasm tools instead of downloading.
+    'export NO_DOWNLOADS=1',
     // macOS /etc/zprofile runs path_helper, which pushes PATH entries from
     // .zshenv to the back; .zprofile sources this file again, so the test is
     // "are our dirs already first", not "are they anywhere in PATH".
     'case "$PATH" in',
-    '  "$ANDROID_HOME/cmdline-tools/latest/bin:"*) ;;',
-    `  *) export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator\${JAVA_HOME:+:$JAVA_HOME/bin}:$PATH" ;;`,
+    `  "${shorten(join(sdk, 'cmdline-tools', 'latest', 'bin'))}:"*) ;;`,
+    '  *) export PATH="${po_dx:+$po_dx:}:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator${JAVA_HOME:+:$JAVA_HOME/bin}:$PATH" ;;',
     'esac',
-    'unset po_brew po_ndk po_jdk po_c',
+    'unset po_brew po_ndk po_jdk po_c po_dx',
   ].join('\n');
 }
 
@@ -622,7 +677,9 @@ function windowsEnv(): string {
     '$env:ANDROID_NDK_HOME = (Get-ChildItem "$env:ANDROID_HOME\\ndk" -Directory | Sort-Object -Property Name | Select-Object -Last 1).FullName',
     '$env:NDK_HOME = $env:ANDROID_NDK_HOME',
     `$env:JAVA_HOME = "${jdkHome}"`,
-    `$env:Path = "${join(jdkHome, 'bin')};$env:ANDROID_HOME\\cmdline-tools\\latest\\bin;$env:ANDROID_HOME\\platform-tools;$env:ANDROID_HOME\\emulator;" + $env:Path`,
+    // The locked dx uses which() for Tailwind and the wasm tools instead of downloading.
+    '$env:NO_DOWNLOADS = "1"',
+    `$env:Path = "${[...dxToolDirs, join(jdkHome, 'bin')].join(';')};$env:ANDROID_HOME\\cmdline-tools\\latest\\bin;$env:ANDROID_HOME\\platform-tools;$env:ANDROID_HOME\\emulator;" + $env:Path`,
   ].join('\n');
 }
 
@@ -740,12 +797,12 @@ async function configureWindowsEnv(): Promise<void> {
     log('skipped; paste the lines above or re-run to try again');
     return;
   }
-  for (const [key, value] of Object.entries({ JAVA_HOME: jdkHome, ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, ANDROID_NDK_HOME: ndkDir, NDK_HOME: ndkDir })) {
+  for (const [key, value] of Object.entries({ JAVA_HOME: jdkHome, ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, ANDROID_NDK_HOME: ndkDir, NDK_HOME: ndkDir, NO_DOWNLOADS: '1' })) {
     // oxlint-disable-next-line no-await-in-loop -- ordered registry writes, each with its own failure log
     if ((await run('setx', [key, value], { quiet: true })).status !== 0) log(`warn: setx ${key} failed`);
   }
   // setx truncates at 1024 chars, so PATH is extended through the user registry.
-  const prepend = [join(jdkHome, 'bin'), join(sdk, 'cmdline-tools', 'latest', 'bin'), join(sdk, 'platform-tools'), join(sdk, 'emulator')].join(';');
+  const prepend = [...dxToolDirs, join(jdkHome, 'bin'), join(sdk, 'cmdline-tools', 'latest', 'bin'), join(sdk, 'platform-tools'), join(sdk, 'emulator')].join(';');
   const script =
     `$p = [Environment]::GetEnvironmentVariable('Path','User'); ` +
     `[Environment]::SetEnvironmentVariable('Path', '${prepend};' + $p, 'User')`;

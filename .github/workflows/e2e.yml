@@ -6,10 +6,12 @@
 # `web` and `apple` have run green, and `android`'s ARM64 job has not been
 # dispatched yet — it is the one still owing a fix.
 #
-# workflow_dispatch only on purpose: `web` still owes the second green run that
-# would earn it a `pull_request`/`schedule` trigger of its own, macOS minutes
-# bill at $0.062/min on this private repo (Linux x64 $0.006, Linux arm64 $0.005),
-# and `apple`/`android` stay `continue-on-error` until they are trusted.
+# workflow_dispatch only on purpose: before `web` earns a pull_request trigger,
+# it must succeed in two consecutive workflow_dispatch runs on main (a failed or
+# cancelled main-run web job resets that count). Only then should `Web tandem
+# (ARM64)` become a required PR status check. macOS minutes bill at $0.062/min
+# on this private repo (Linux x64 $0.006, Linux arm64 $0.005), and
+# `apple`/`android` stay `continue-on-error` until they are trusted.
 name: Tandem e2e
 
 on:
@@ -27,17 +29,6 @@ env:
   CARGO_BUILD_JOBS: '2'
   DX_TELEMETRY_ENABLED: 'false'
   NPM_CONFIG_ENGINE_STRICT: 'true'
-  # `build.rs` bakes this into the binary and signup derives its keys from it, so
-  # a build without it fails at runtime with "Signup failed: … PO_APP_PEPPER must
-  # be set at build time" — which is exactly how the first CI dispatch died.
-  # A secret wins, then a repository variable, then this committed fallback —
-  # the deliberate exception README.md § "App Pepper" describes: it is a test
-  # value for a `--features e2e-seams` build that is never distributed, and both
-  # peers of a run come from one build, so any single consistent value lets them
-  # interoperate. Set `gh secret set PO_APP_PEPPER` or
-  # `gh variable set PO_APP_PEPPER` to use a real one. Must be valid base64 —
-  # `helpers/encryption.rs` base64-decodes it at first use, and rejects empty.
-  PO_APP_PEPPER: ${{ secrets.PO_APP_PEPPER || vars.PO_APP_PEPPER || 'b28tZTJlLXRlc3QtcGVwcGVyLW5vdC1hLXNlY3JldA==' }}
 
 jobs:
   # `src/main.rs` embeds `assets/tailwind.css` through `asset!`, and that file is
@@ -56,8 +47,9 @@ jobs:
     needs: stylesheet
     # Green on the runner (README-e2e.md § Verified on the runners): the apt
     # clang/lld wasm build and Playwright's Chromium both work on this image —
-    # Chromium was the only piece not previously exercised here. What is left is
-    # the second green run that would earn this a `pull_request` trigger.
+    # Chromium was the only piece not previously exercised here. This job stays
+    # fail-closed; two consecutive green main runs are the PR-gate prerequisite
+    # defined in README-e2e.md.
     runs-on: ubuntu-26.04-arm
     timeout-minutes: 180
     env:
@@ -89,6 +81,17 @@ jobs:
 
       - name: Install the repository Rust toolchain
         run: bash scripts/ci-setup-rust.sh --target wasm32-unknown-unknown
+
+      # Warm Cargo cache for the release wasm build (the longest cold step in
+      # this job). Distinct key from quality.yml's clippy caches on purpose:
+      # a release profile shares nothing with a dev profile's artifacts, and
+      # rust-cache keys on the profile automatically — the explicit key only
+      # separates the job family.
+      - name: Cache Cargo build artifacts
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: e2e-web
+          cache-all-crates: true
 
       - name: Install Web C build dependencies
         run: |
@@ -185,6 +188,15 @@ jobs:
         # native joiners.
         run: bash scripts/ci-setup-rust.sh --target aarch64-apple-darwin --target aarch64-apple-ios-sim --target wasm32-unknown-unknown
 
+      # Three release triples (macOS, iOS-sim, wasm) in one job: the cold
+      # build is the job's longest stretch. rust-cache keys on the workspace
+      # profile; the key separates this job family's artifacts.
+      - name: Cache Cargo build artifacts
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: e2e-apple
+          cache-all-crates: true
+
       - name: Install Cap'n Proto compiler and the Homebrew LLVM toolchain
         # .cargo/config.toml points CC_wasm32_unknown_unknown at Homebrew LLVM,
         # which Apple clang cannot replace for the wasm target.
@@ -249,11 +261,16 @@ jobs:
         # build at a glance.
         run: dx build --release --features e2e-seams --platform ios --target aarch64-apple-ios-sim
 
-      - name: Run the pairing scenario on the macOS app and an iOS simulator
+      - name: Run the pairing scenario on macOS and on the iOS simulator
         # The anchor is the web surface (the only one with a DOM to type the
-        # account password into); macOS and the simulator are joiners. simctl
-        # only: no signing identity, no xtool, no physical device.
-        run: node test/run.ts --scenario S1 --surfaces web,macos,ios-sim
+        # account password into); macOS and the simulator are joiners. Two
+        # sequential runs so the simulator actually pairs — one `--surfaces`
+        # list takes only one joiner per run, and a three-surface list left the
+        # simulator idling. simctl only: no signing identity, no xtool, no
+        # physical device.
+        run: |
+          node test/run.ts --scenario S1 --surfaces web,macos
+          node test/run.ts --scenario S1 --surfaces web,ios-sim
 
       - name: Assert LAN locality on the runner's own Mac
         # S18 cannot run on the web job: WASM Veilid has no UDP, so every peer
@@ -320,6 +337,14 @@ jobs:
       - name: Install the repository Rust toolchain
         run: bash scripts/ci-setup-rust.sh --target aarch64-linux-android
 
+      # Warm Cargo cache for the release APK build (the job's longest cold
+      # step before the emulator boots).
+      - name: Cache Cargo build artifacts
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: e2e-android
+          cache-all-crates: true
+
       - name: Install Android C build dependencies
         run: |
           sudo apt-get update
@@ -370,7 +395,7 @@ jobs:
         # debug build here would be both wrong and ignored.
         run: dx build --release --features e2e-seams --platform android
 
-      - name: Boot the emulator and run the tandem scenario
+      - name: Boot one emulator and run the Android catalog in two serial partitions
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           # `google_apis_ps16k` = Google Play **services**, no Play **Store** app,
@@ -391,7 +416,40 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
           emulator-boot-timeout: 600
-          script: node test/run.ts --surfaces android
+          # One emulator action owns both partitions: never boot a second
+          # emulator concurrently. Smoke is the disjoint fail-fast partition;
+          # only its success unlocks the rest of the registry-derived catalog.
+          # The remaining partition runs every other scenario once and reports
+          # all of its failures together. One process per scenario keeps account,
+          # app, and Veilid state isolated just as it does in the web catalog.
+          script: |
+            scenarios=$(node test/run.ts --list --names --surfaces android) || {
+              echo "::error::the harness could not list the Android catalog"
+              exit 1
+            }
+            if [ -z "$scenarios" ]; then
+              echo "::error::the registry named no Android scenario"
+              exit 1
+            fi
+            if ! grep -Fxq -- smoke <<< "$scenarios"; then
+              echo "::error::the Android catalog has no smoke fail-fast scenario"
+              exit 1
+            fi
+            echo "Android catalog: $scenarios"
+            echo "::group::fail-fast partition: smoke"
+            node test/run.ts --scenario smoke --surfaces android || exit 1
+            echo "::endgroup::"
+            failed=""
+            while read -r scenario; do
+              [ "$scenario" != smoke ] || continue
+              echo "::group::remaining partition: $scenario"
+              node test/run.ts --scenario "$scenario" --surfaces android || failed="$failed $scenario"
+              echo "::endgroup::"
+            done <<< "$scenarios"
+            if [ -n "$failed" ]; then
+              echo "::error::remaining-partition scenarios that failed:$failed"
+              exit 1
+            fi
 
       - name: Upload evidence
         if: always()

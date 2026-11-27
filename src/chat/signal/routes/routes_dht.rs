@@ -41,7 +41,9 @@ fn encode_route_entries(entries: &[RouteEntry]) -> Vec<u8> {
         .map(|e| 2 + e.device_id.len() + 8 + 4 + e.blob.len())
         .sum::<usize>();
     let mut buf = Vec::with_capacity(cap);
-    push_u32_len_prefixed(&mut buf, &capnp_u32(entries.len()).to_le_bytes());
+    // The count is a bare u32 field, not a length-prefixed payload — matching
+    // decode_route_entries' raw `data.get(..4)` read.
+    buf.extend_from_slice(&capnp_u32(entries.len()).to_le_bytes());
     for entry in entries {
         push_u16_len_prefixed(&mut buf, entry.device_id.as_bytes());
         buf.extend_from_slice(&entry.timestamp.to_le_bytes());

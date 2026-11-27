@@ -108,7 +108,11 @@ pub fn rotation_wait_decision(
 }
 
 fn backoff_delay(attempts: u32, backoff_base_ms: u64, max_backoff_ms: u64) -> u64 {
-    (2u64.pow(attempts.min(10)).saturating_mul(backoff_base_ms)).min(max_backoff_ms)
+    crate::helpers::async_utils::exponential_backoff_ms(
+        attempts.min(10),
+        backoff_base_ms,
+        Some(max_backoff_ms),
+    )
 }
 
 /// Lane key for conflict-free parallel execution.

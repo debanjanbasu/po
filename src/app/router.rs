@@ -10,7 +10,7 @@ use crate::{
 use dioxus::prelude::*;
 use dioxus_router::RouterConfig;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AuthPhase {
     Splash,
     BiometricGate,
@@ -22,14 +22,18 @@ enum AuthPhase {
 
 #[component]
 pub fn ActiveRouter() -> Element {
-    let auth_phase = use_memo(|| match &*SESSION.read() {
-        SessionPhase::Restoring => AuthPhase::Splash,
-        SessionPhase::PendingBiometric(_) => AuthPhase::BiometricGate,
-        SessionPhase::PendingSecondFactor(_) => AuthPhase::PinGate,
-        SessionPhase::Authenticated(_) if !app_state_is_hydrated() => AuthPhase::Splash,
-        SessionPhase::Authenticated(user) if user.needs_onboarding() => AuthPhase::Onboarding,
-        SessionPhase::Authenticated(_) => AuthPhase::Authenticated,
-        SessionPhase::Anonymous => AuthPhase::Guest,
+    let auth_phase = use_memo(|| {
+        let phase = match &*SESSION.read() {
+            SessionPhase::Restoring => AuthPhase::Splash,
+            SessionPhase::PendingBiometric(_) => AuthPhase::BiometricGate,
+            SessionPhase::PendingSecondFactor(_) => AuthPhase::PinGate,
+            SessionPhase::Authenticated(_) if !app_state_is_hydrated() => AuthPhase::Splash,
+            SessionPhase::Authenticated(user) if user.needs_onboarding() => AuthPhase::Onboarding,
+            SessionPhase::Authenticated(_) => AuthPhase::Authenticated,
+            SessionPhase::Anonymous => AuthPhase::Guest,
+        };
+        dioxus::logger::tracing::info!("DEBUG ActiveRouter phase: {phase:?}");
+        phase
     });
     match auth_phase() {
         AuthPhase::Splash => rsx! { RestoreSplash {} },

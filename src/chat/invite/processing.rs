@@ -11,7 +11,7 @@ use crate::{
         manager,
         record::{self, hydrate_conversation_heads, spawn_archive_backfill},
         session_flow::{activate_contact_for_conversation, upsert_conversation_entry},
-        signal::{self, PeerSignal, SignalPayload, signal_all_peers},
+        signal::{self, PeerSignal, SignalPayload},
     },
     config,
     helpers::async_utils::now_epoch_millis,
@@ -114,8 +114,6 @@ pub(super) async fn process_invite(
     manifest_key_str: &str,
     inviter_key: &RecordKey,
 ) -> Result<InviteProcessOutcome> {
-    let sender_identity =
-        parse_record_key(&ctx.dht_key).context("Invalid local identity for invite processing")?;
     let hydrated = hydrate_conversation_heads(&manifest_key, manifest_key_str, ctx, guard).await?;
 
     // Hydration proves the record's writer slots back its roster; this proves
@@ -184,14 +182,11 @@ pub(super) async fn process_invite(
         },
     );
 
-    let my_feed_subkey = record::member_feed_subkey(hydrated.member_index);
-    signal_all_peers(
+    signal::fan_new_data_if_session_current(
+        guard,
+        manifest_key_str,
         &hydrated.conv.roster.peer_identity_keys(&ctx.dht_key),
-        &PeerSignal::unsigned(SignalPayload::NewData {
-            conv_key: manifest_key,
-            sender_identity,
-            member_subkey: my_feed_subkey,
-        }),
+        record::member_feed_subkey(hydrated.member_index),
     );
     Ok(InviteProcessOutcome::Accepted)
 }

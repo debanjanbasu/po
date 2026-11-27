@@ -162,11 +162,7 @@ pub fn reconcile_then_merge_remote<T: Reconcile + Hydrate>(
     let mut remote_doc = AutoCommit::load(remote)?;
     doc.merge(&mut remote_doc)?;
 
-    let mut merged_heads = doc.get_heads();
-    let mut remote_heads = remote_doc.get_heads();
-    merged_heads.sort_unstable();
-    remote_heads.sort_unstable();
-    let remote_stale = merged_heads != remote_heads;
+    let remote_stale = remote_is_stale(&mut doc, &mut remote_doc);
 
     let raw_len = doc.save_nocompress().len();
     let merged = doc.save();
@@ -191,17 +187,24 @@ pub fn merge_and_hydrate_with_stale_check<T: Hydrate>(
         Some(local_bytes) if !local_bytes.is_empty() => {
             let mut local_doc = AutoCommit::load(local_bytes)?;
             local_doc.merge(&mut remote_doc)?;
-            let mut merged_heads = local_doc.get_heads();
-            let mut remote_heads = remote_doc.get_heads();
-            merged_heads.sort_unstable();
-            remote_heads.sort_unstable();
-            let stale = merged_heads != remote_heads;
+            let stale = remote_is_stale(&mut local_doc, &mut remote_doc);
             (local_doc, stale)
         }
         _ => (remote_doc, false),
     };
     let value: T = hydrate(&doc).map_err(AutomergeSyncError::SchemaValidation)?;
     Ok((doc.save(), value, remote_stale))
+}
+
+/// Whether the remote doc is missing changes present in the merged doc —
+/// i.e. the network copy is stale (a publish failed or is still queued) and
+/// should be re-published. Compares the sorted actor heads of both docs.
+fn remote_is_stale(merged: &mut AutoCommit, remote: &mut AutoCommit) -> bool {
+    let mut merged_heads = merged.get_heads();
+    let mut remote_heads = remote.get_heads();
+    merged_heads.sort_unstable();
+    remote_heads.sort_unstable();
+    merged_heads != remote_heads
 }
 
 /// Merge two automerge docs, preserving both histories. Either side may be

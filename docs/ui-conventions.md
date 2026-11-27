@@ -173,7 +173,7 @@ element as `skeleton-text`: Tailwind utilities are direct members of the
 
 ### Silent daisyUI 4 classes
 
-Several daisyUI 4 class names now match nothing in v5 and fail silently:
+Several daisyUI 4 class names now match nothing in daisyUI 5 and fail silently:
 `rounded-btn` (use `rounded-field`), `input-bordered`/`textarea-bordered`
 (borders are default) and `placeholder` on `avatar` (use `avatar-placeholder`).
 Check a new class against `node_modules/daisyui/components/*.css` first.

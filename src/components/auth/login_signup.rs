@@ -8,7 +8,10 @@ use crate::{
             AdmissionUi, LatestAttemptController, finalize_admission_ui,
             use_latest_attempt_controller,
         },
-        shared::{CenteredPage, OrDividerLink, use_form_field_manual},
+        shared::{
+            AutoSubmitGate, CenteredPage, OrDividerLink, RetryButton, apply_form_input,
+            use_form_field_manual,
+        },
     },
     platform::deep_link,
     router::AuthRoute,
@@ -66,18 +69,18 @@ fn snapshot_is_current(
 #[component]
 pub fn LoginSignup() -> Element {
     let nav = use_navigator();
-    let mut username = use_form_field_manual("", true, |v| {
+    let username = use_form_field_manual("", true, |v| {
         if validate_username(v) {
             None
         } else {
             Some("3-256 characters")
         }
     });
-    let mut password = use_form_field_manual("", true, validate_password_msg);
+    let password = use_form_field_manual("", true, validate_password_msg);
     let mut remember_me = use_signal(|| true);
     let mut status = use_signal(|| None::<AuthStatus>);
     let mut signup_error = use_signal(|| None::<String>);
-    let mut last_auth_attempt = use_signal(|| None::<AuthAttempt>);
+    let auth_gate = AutoSubmitGate::<AuthAttempt>::use_gate();
 
     let auth_attempt = use_latest_attempt_controller();
     let signup_attempt = use_latest_attempt_controller();
@@ -107,8 +110,8 @@ pub fn LoginSignup() -> Element {
             if signup_attempt.is_busy() {
                 signup_attempt.cancel();
             }
-            if last_auth_attempt.peek().is_some() {
-                last_auth_attempt.set(None);
+            if auth_gate.peek().is_some() {
+                auth_gate.clear();
             }
             return;
         }
@@ -119,20 +122,19 @@ pub fn LoginSignup() -> Element {
             if status.peek().is_some() {
                 status.set(None);
             }
-            if last_auth_attempt.peek().is_some() {
-                last_auth_attempt.set(None);
+            if auth_gate.peek().is_some() {
+                auth_gate.clear();
             }
             return;
         }
         let attempt = ((username.value)(), (password.value)(), remember_me());
-        if last_auth_attempt.read().as_ref() == Some(&attempt) {
+        if !auth_gate.claim(attempt.clone()) {
             return;
         }
         let attempt_id = auth_attempt.begin();
         let username_snapshot = attempt.0.clone();
         let password_snapshot = attempt.1.clone();
         let remember_snapshot = attempt.2;
-        last_auth_attempt.set(Some(attempt.clone()));
         if status.peek().is_some() {
             status.set(None);
         }
@@ -210,10 +212,10 @@ pub fn LoginSignup() -> Element {
                         minlength: 3,
                         maxlength: 256,
                         oninput: move |ev: FormEvent| {
+                            apply_form_input(username, ev.value(), |_| {
                                 reset_signup_state(auth_attempt, signup_attempt, signup_error);
-                                username.value.set(ev.value());
-                                username.is_dirty.set(true);
-                            },
+                            });
+                        },
                     }
                     p { class: "validator-hint", "3-256 characters" }
                 }
@@ -233,10 +235,10 @@ pub fn LoginSignup() -> Element {
                             maxlength: 256,
                             pattern: r"(?=.*[0-9])(?=.*[a-z])(?=.*[A-Z])(?=.*[!@#$%\^&\*\(\)_\+\-]).{{8,256}}",
                             oninput: move |ev: FormEvent| {
+                                apply_form_input(password, ev.value(), |_| {
                                     reset_signup_state(auth_attempt, signup_attempt, signup_error);
-                                    password.value.set(ev.value());
-                                    password.is_dirty.set(true);
-                                },
+                                });
+                            },
                         }
                         p { class: "validator-hint", {password_rule_hint()} }
                     }
@@ -341,11 +343,10 @@ pub fn LoginSignup() -> Element {
                         Some(AuthStatus::Error(err)) => rsx! { span { class: "text-error", "{err}" } },
                     }
                     if matches!(*status.read(), Some(AuthStatus::Incorrect | AuthStatus::Error(_))) {
-                        button {
-                            class: "btn btn-ghost btn-sm mt-2",
-                            r#type: "button",
-                            onclick: move |_| last_auth_attempt.set(None),
-                            "Try again"
+                        RetryButton {
+                            label: "Try again",
+                            class: "btn-sm mt-2",
+                            onclick: { let gate = auth_gate; move |()| gate.clear() },
                         }
                     }
                     if let Some(ref err) = *signup_error.read() {

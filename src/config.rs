@@ -63,16 +63,20 @@ pub mod pairing {
     pub const TTL_SECS: u64 = 300;
     /// Maximum base64-encoded payload size accepted.
     pub const MAX_BASE64_PAYLOAD_LEN: usize = 1024;
-    /// Minimum decoded pairing payload length.
-    pub const MIN_PAYLOAD_LEN: usize = 32;
-    /// V2 plaintext layout: version(1) + expires(8) + kind(4) + dht(32) +
-    /// enc-flag(1) + enc-key(32) + pub(32) + sec(32). The DHT record's
-    /// embedded encryption key must travel with the opaque key: without it a
-    /// paired device can route to the record but cannot decrypt its values
-    /// (Veilid encrypts record values at rest with this key).
-    pub const V2_PLAINTEXT_LEN: usize = 1 + 8 + 4 + 32 + 1 + 32 + 32 + 32;
-    /// Payload length after stripping the version byte.
-    pub const V2_PAYLOAD_LEN: usize = V2_PLAINTEXT_LEN - 1;
+    /// Minimum decoded pairing payload length: account-ID header(16) +
+    /// nonce(24) + body(158) + AEAD tag(16).
+    pub const MIN_PAYLOAD_LEN: usize = 16 + 24 + 158 + 16;
+    /// Body layout (inside the AEAD): version(1) + expires(8) + kind(4) +
+    /// dht(32) + enc-flag(1) + enc-key(32) + pub(32) + sec(32). The DHT
+    /// record's embedded encryption key must travel with the opaque key:
+    /// without it a paired device can route to the record but cannot decrypt
+    /// its values (Veilid encrypts record values at rest with this key).
+    /// Inner plaintext: version(1) + expiry(8) + kind(4) + record key(32+1) +
+    /// keypair(32+32) + account ID(32). The version byte names the frame
+    /// layout; this build accepts only the initial version.
+    pub const PAIRING_PLAINTEXT_LEN: usize = 1 + 8 + 4 + 32 + 1 + 32 + 32 + 32;
+    /// Body length after stripping the version byte.
+    pub const PAIRING_PAYLOAD_LEN: usize = PAIRING_PLAINTEXT_LEN - 1;
     /// Maximum device-label bytes carried in a pairing beacon.
     pub const BEACON_MAX_LABEL_BYTES: usize = 48;
     /// Clock-skew allowance when filtering stale beacons by timestamp.

@@ -1,6 +1,6 @@
 # po Landing Site
 
-Static landing page for **[po-app.pages.dev](https://po-app.pages.dev)** — handles contact invites, device pairing redirects, and marketing.
+Static landing page for **[po-ai.pages.dev](https://po-ai.pages.dev)** — handles contact invites, device pairing redirects, and marketing.
 
 Built with [Astro](https://astro.build) + [Tailwind CSS v4](https://tailwindcss.com) + [DaisyUI 5](https://daisyui.com) (bumblebee theme) to match the app's look and feel.
 
@@ -43,7 +43,7 @@ Hosted on [Cloudflare Pages](https://pages.cloudflare.com) (free tier) with
 
 Preview deployments are created automatically for pull requests.
 
-Production URL: **https://po-app.pages.dev**
+Production URL: **https://po-ai.pages.dev**
 
 ## Pages
 
@@ -100,8 +100,8 @@ landing/
 
 The Dioxus app generates share URLs pointing here:
 
-- **Contact**: `https://po-app.pages.dev/c/{username}/{dht_key}` via `share_urls::contact_share_url()`
-- **Pairing**: `https://po-app.pages.dev/p/{payload}` via `share_urls::pairing_share_url()`
+- **Contact**: `https://po-ai.pages.dev/c/{username}/{dht_key}` via `share_urls::contact_share_url()`
+- **Pairing**: `https://po-ai.pages.dev/p/{payload}` via `share_urls::pairing_share_url()`
 - **Compact identity**: `po:{username}#{dht_key}` via `share_urls::compact_identity()` (offline sharing)
 
 The `CONTACT_SHARE_URL_PREFIX` and `PAIRING_SHARE_URL_PREFIX` constants live in `../src/platform/share_urls.rs`.

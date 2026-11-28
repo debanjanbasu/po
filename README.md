@@ -357,8 +357,8 @@ credential check -> decrypt keypair -> stage remember-me
 
 ### Pairing and Contact Input
 
-- Pairing accepts `po://pair?data=...`, `https://po-app.pages.dev/p/{payload}`, or raw payload; v1 pairing PINs are exactly 12 digits and expire after 5 minutes.
-- Contact add accepts: `po:username#dht_key`, `https://po-app.pages.dev/c/{username}/{dht_key}`, encoded deep link, or `username|dht_key`.
+- Pairing accepts `po://pair?data=...`, `https://po-ai.pages.dev/p/{payload}`, or raw payload; v1 pairing PINs are exactly 12 digits and expire after 5 minutes.
+- Contact add accepts: `po:username#dht_key`, `https://po-ai.pages.dev/c/{username}/{dht_key}`, encoded deep link, or `username|dht_key`.
 - Pairing and share actions trigger reactively once valid inputs are provided; superseded async attempts are discarded.
 
 ---
@@ -382,7 +382,7 @@ The authoritative identity and conversation layouts, reserved subkeys, encryptio
 | Biometrics | Platform-native auth bridges |
 | Pairing | v1 QR payload + exact 12-digit, five-minute PIN + account password; remember-me wrap key remains device-local |
 | Backups | Initial v1 AEAD-header-bound format using the account-bound DHT key |
-| Deep links | `po://` + universal links under `https://po-app.pages.dev` |
+| Deep links | `po://` + universal links under `https://po-ai.pages.dev` |
 
 ---
 

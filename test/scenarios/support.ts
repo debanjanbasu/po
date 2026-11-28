@@ -381,6 +381,6 @@ export async function pairSecondDevice(
 /** The pairing share URL the app encodes into the pairing QR. */
 export function pairingShareUrl(deepLink: string): string {
   const payload = deepLink.split('data=')[1]?.split('#')[0] ?? '';
-  return `https://po-app.pages.dev/p/${payload}`;
+  return `https://po-ai.pages.dev/p/${payload}`;
 }
 

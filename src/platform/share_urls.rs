@@ -34,8 +34,8 @@ const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b'^')
     .add(b'|');
 
-const CONTACT_SHARE_URL_PREFIX: &str = "https://po-app.pages.dev/c/";
-const PAIRING_SHARE_URL_PREFIX: &str = "https://po-app.pages.dev/p/";
+const CONTACT_SHARE_URL_PREFIX: &str = "https://po-ai.pages.dev/c/";
+const PAIRING_SHARE_URL_PREFIX: &str = "https://po-ai.pages.dev/p/";
 const CONTACT_SHARE_TOKEN_PREFIXES: &[&str] = &[
     config::deep_link::CHAT_SCHEME,
     CONTACT_SHARE_URL_PREFIX,
@@ -247,7 +247,7 @@ pub fn parse_share_url(input: &str) -> Option<ShareUrl<'_>> {
     None
 }
 
-/// Builds a contact share URL: `https://po-app.pages.dev/c/{username}/{dht_key}`
+/// Builds a contact share URL: `https://po-ai.pages.dev/c/{username}/{dht_key}`
 #[must_use]
 pub fn contact_share_url(username: &str, dht_key: &str) -> String {
     format!(
@@ -257,7 +257,7 @@ pub fn contact_share_url(username: &str, dht_key: &str) -> String {
     )
 }
 
-/// Builds a pairing share URL: `https://po-app.pages.dev/p/{payload}`
+/// Builds a pairing share URL: `https://po-ai.pages.dev/p/{payload}`
 #[must_use]
 pub fn pairing_share_url(payload: &str) -> String {
     format!(

@@ -369,7 +369,7 @@ async fn decrypt_pairing_secret(
 /// Extracts the base64 payload from pairing input.
 ///
 /// Accepts multiline share bundles, `po://pair?data=...`, canonical
-/// universal/app-link paths (`https://po-app.pages.dev/p/...`), and raw
+/// universal/app-link paths (`https://po-ai.pages.dev/p/...`), and raw
 /// payloads. URL parsing is delegated to [`share_urls::parse_share_url`] so
 /// pairing intake and share generation stay in sync.
 #[must_use]

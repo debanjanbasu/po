@@ -1,7 +1,7 @@
 //! Deep link URL interception and dispatch.
 //!
 //! On iOS/macOS and Android, native FFI surfaces the URL that opened the app
-//! (either `po://...` or `https://po-app.pages.dev/...`). Startup captures at
+//! (either `po://...` or `https://po-ai.pages.dev/...`). Startup captures at
 //! most one pending launch URL, route-level consumers may peek at the pending
 //! route target, and only the designated screen owner may consume the typed
 //! action payload. Apple launch handlers are installed before the event

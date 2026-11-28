@@ -167,7 +167,7 @@ almost always this.
 
 Pairing links embed the PIN; `test/lib/run.ts::maskSecrets` masks
 `pin=`/`password=` values, `data=` payloads, and the pairing share URL
-(`https://po-app.pages.dev/p/<payload>`) in every log/result file.
+(`https://po-ai.pages.dev/p/<payload>`) in every log/result file.
 
 Mask the assembled line, not the bare value: the rules are prefix-anchored,
 so `ctx.mask(share.pin)` matches nothing and the PIN lands in the evidence.

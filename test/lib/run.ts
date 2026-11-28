@@ -48,7 +48,7 @@ export interface RunContext {
  * are masked on the way into any file we write. Evidence is shared.
  *
  * The pairing share URL carries the same payload as its last path segment
- * (`https://po-app.pages.dev/p/<payload>`), with no `data=`/`link=` prefix to
+ * (`https://po-ai.pages.dev/p/<payload>`), with no `data=`/`link=` prefix to
  * anchor on — so it is masked by its own prefix. Masking the bare *value*
  * instead of the assembled line does nothing: the rules below are
  * prefix-anchored, so a raw PIN or URL passed on its own survives.
@@ -59,7 +59,7 @@ export function maskSecrets(text: string): string {
     .replace(/(data=)[A-Za-z0-9_%.-]{8,}/gu, '$1***')
     .replace(/(link=)(?:https?|po):\/\/[^\s"']*/gu, '$1***')
     .replace(/(share_url=)(?:https?:\/\/[^\s"']*)?/giu, '$1***')
-    .replace(/(https:\/\/po-app\.pages\.dev\/p\/)[A-Za-z0-9_%.-]{8,}/gu, '$1***');
+    .replace(/(https:\/\/po-ai\.pages\.dev\/p\/)[A-Za-z0-9_%.-]{8,}/gu, '$1***');
 }
 
 /** Evidence path for one peer's screenshot inside `surface`'s directory. */

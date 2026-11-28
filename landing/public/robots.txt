@@ -2,4 +2,4 @@ User-agent: *
 Allow: /
 Disallow: /_astro/
 
-Sitemap: https://po-app.pages.dev/sitemap.xml
+Sitemap: https://po-ai.pages.dev/sitemap.xml

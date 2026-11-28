@@ -46,7 +46,7 @@ pub(super) fn PairModeSection() -> Element {
             None
         } else {
             Some(
-                "Invalid pairing data format. Must be a valid po:// link, po-app.pages.dev link, or base64-encoded payload.",
+                "Invalid pairing data format. Must be a valid po:// link, po-ai.pages.dev link, or base64-encoded payload.",
             )
         }
     });
@@ -261,7 +261,7 @@ pub(super) fn PairModeSection() -> Element {
             div { class: "text-error", "aria-live": "polite", "{err}" }
         } else if (payload.error)().is_some() && !payload.value.read().is_empty() {
             p { class: "validator-hint text-error",
-                "Invalid pairing data format. Must be a valid po:// link, po-app.pages.dev link, or base64-encoded payload."
+                "Invalid pairing data format. Must be a valid po:// link, po-ai.pages.dev link, or base64-encoded payload."
             }
         } else {
             p { class: "validator-hint", "Paste a link, scan a QR code, or upload a QR image" }

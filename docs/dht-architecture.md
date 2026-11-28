@@ -161,7 +161,7 @@ Conversations use a single `DHTSchema::smpl(3, members)` record per conversation
 
 ```
 raw bytes
-  → zstd compress (`ZSTD_LEVEL` = 12) with the stable version-zero dictionary-free transport framing
+  → zstd compress (`ZSTD_LEVEL` = 22) with the stable version-zero dictionary-free transport framing
   → AEAD encrypt (random nonce + SharedSecret)
   → prepend nonce bytes
   → set_dht_value()

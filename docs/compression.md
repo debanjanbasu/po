@@ -33,9 +33,9 @@ Data is compressed in one of two modes:
 | Structured (`compress_structured`) | Single trained dictionary (from both structured + chat samples) | Profiles, security settings, app state, CRDT metadata, chat messages |
 | Plain (`compress_plain`) | None — raw zstd | Keypair blobs, dictionary blobs, pairing beacons, local dictionaries |
 
-There is **one unified dictionary** (`assets/dict/structured.zdict`) trained from both structured field patterns and chat message patterns. Plain compression uses raw zstd with no dictionary. All compression across the app (local `TableDB`, DHT transport, dictionary blobs, recompression, and backup exports) uses `ZSTD_LEVEL = 12`. Structured compression uses the trained dictionary selected from the `DictionaryRegistry`.
+There is **one unified dictionary** (`assets/dict/structured.zdict`) trained from both structured field patterns and chat message patterns. Plain compression uses raw zstd with no dictionary. All compression across the app (local `TableDB`, DHT transport, dictionary blobs, recompression, and backup exports) uses `ZSTD_LEVEL = 22`. Structured compression uses the trained dictionary selected from the `DictionaryRegistry`; dynamic dictionary training and dictionary reuse remain central to making maximum-level compression worthwhile.
 
-**Level 22 → 12 (2026-11-12).** Every measured table below was taken at level 22 on native, before that change; the sizes are ~1-3% smaller than the shipped build produces and the CPU figures are ceilings roughly 9× above it. The change was made because web runs the codec inline on the UI thread — see `config::compression::ZSTD_LEVEL` and commit `0187f38e`, which measured level 12 as byte-identical to 19 on all seven reference payloads at 11–18% of the CPU.
+**Uniform level 22.** Every compression operation deliberately uses zstd's maximum level regardless of its higher CPU and memory cost. The measured tables below were taken at level 22 on native and describe the shipped setting. Web codec work still runs inline, so the visibility-based deferral for training and recompression described below remains important.
 
 At build time, `build.rs` filters blank/whitespace-only/comment-only text lines and zero-length binary entries before retraining the embedded dictionary. An empty filtered corpus warns and preserves the current dictionary; a matching sample hash silently reuses the cached dictionary.
 
@@ -47,7 +47,7 @@ All targets retain `zdict_builder`; native targets additionally enable `zstdmt`.
 
 Automerge CRDT documents (see [sync-pipeline.md](sync-pipeline.md)) are **not** stored as raw document bytes. Every producer in `src/storage/automerge.rs` calls `AutoCommit::save()` — automerge's own DEFLATE output — and the table layer then compresses that with structured zstd at `ZSTD_LEVEL` exactly like any other row. That is the single stored form, local and on the DHT.
 
-Skipping automerge's DEFLATE (the pre-change `save_nocompress()` form) only moves the work downstream: zstd then runs over a 2.2×–3.5× larger input on every write and stores a *larger* row — and a chat conversation doc is rewritten on every message send. Measured on conversation documents (automerge 0.12 + autosurgeon 0.14, accumulated CRDT history, the trained `assets/dict/structured.zdict` — **native, level 22**; see the level-change note above):
+Skipping automerge's DEFLATE (the pre-change `save_nocompress()` form) only moves the work downstream: zstd then runs over a 2.2×–3.5× larger input on every write and stores a *larger* row — and a chat conversation doc is rewritten on every message send. Measured on conversation documents (automerge 0.12 + autosurgeon 0.14, accumulated CRDT history, the trained `assets/dict/structured.zdict` — **native, level 22**; see the uniform-level note above):
 
 | doc | `save_nocompress()` | `save()` (DEFLATE) | zstd L22(dict, `save_nocompress()`) | zstd L22(dict, `save()`) |
 |-----|--------------------|--------------------|-----------------------------------|------------------------|
@@ -112,7 +112,7 @@ The `DictionaryRegistry` is a global singleton behind standard-library read/writ
 - Trained dictionaries are keyed by content identity. Persisted rows in `po_dicts` are immutable content-addressed blobs named with the zstd-vanilla-dictionary identity family (`structured.vb3:<digest>`); `vb3` names zstd's vanilla-dictionary format tag, not an app schema revision.
 - Holds up to **8 hot dictionary entries** in memory (`MAX_DICT_VERSIONS`) as `PreparedDict` entries (`Arc<[u8]>` bytes + pre-parsed `dict_id`). When exceeded, the oldest entry is evicted in insertion order; content-addressed blobs remain in persistent `po_dicts` storage.
 - Startup hashes the embedded `STRUCTURED_ZDICT`, stores its `PreparedDict` under its content identity, and loads the active content-only pointer from `active_dictionary`. After Veilid is available, `reload_from_tablestore()`—guarded by `DICTIONARIES_READY`—completes before dependent local I/O; other persisted dictionary identities are lazy-loaded on demand.
-- Thread-safe reads/writes use the registry helpers. Compressor/decompressor contexts are pooled by `DictionaryId` (`CODEC_POOLS`, `MAX_IDLE_CONTEXTS_PER_POOL = 4` per `DictionaryId`), with all compressors operating at `ZSTD_LEVEL = 12`.
+- Thread-safe reads/writes use the registry helpers. Compressor/decompressor contexts are pooled by `DictionaryId` (`CODEC_POOLS`, `MAX_IDLE_CONTEXTS_PER_POOL = 4` per `DictionaryId`), with all compressors operating at `ZSTD_LEVEL = 22`.
 
 ## Compression Flow
 
@@ -124,7 +124,7 @@ compress(data, domain)
         │       ├── one-time TableDB reload (DICTIONARIES_READY bootstrap)
         │       ├── read_registry() once → atomic (DictionaryId, Arc<PreparedDict>) snapshot
         │       ├── acquire pooled Compressor for DictionaryId
-        │       ├── compress with snapshot dictionary at `ZSTD_LEVEL` (12)
+        │       ├── compress with snapshot dictionary at `ZSTD_LEVEL` (22)
         │       └── prepend DictionaryId header → Bytes
         │
         └── domain = Plain
@@ -471,7 +471,7 @@ All tunable constants are centralized in `src/config.rs` (`config::compression` 
 
 | Constant | Value | Canonical Location | Purpose |
 |----------|-------|-------------------|---------|
-| `ZSTD_LEVEL` | 12 | `config.rs` | Unified zstd compression level across local storage, DHT transport, and backups (was 22; see the level-change note at the top) |
+| `ZSTD_LEVEL` | 22 | `config.rs` | Maximum zstd compression level across local storage, DHT transport, recompression, trainer comparisons, and backups |
 | `VERSION_HEADER_BYTES` | 8 | `codec/dictionary_id.rs` | Size of the structured-frame version prefix (content frames add a 32-byte digest) |
 | `MAX_DICT_VERSIONS` | 8 | `config.rs` | Max hot dictionary versions kept in memory |
 | `MAX_DECOMPRESSED_BYTES` | 10 MB | `config.rs` | Safety limit for decompression output |

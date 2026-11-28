@@ -5,7 +5,7 @@ on macOS, Linux, and Windows; its build-side contract is
 [README.md § Build Verification](../README.md#build-verification). The tandem harness lives
 in the root `test/` folder (see [Phases](#phases) and
 [test/README.md](../test/README.md) for the per-surface contract); the app-side seams it
-relies on are `src/config.rs::e2e` and its call sites.
+relies on are `src/config/e2e.rs` and its call sites.
 Read alongside [docs/debugging.md](debugging.md) (per-platform logs, cold-state reset,
 two-device recipe) — this doc only adds the automation layer on top of it.
 
@@ -170,7 +170,7 @@ assertion surface is identical across platforms.
 The app's own `tracing` domains remain the triage vocabulary
 (`auth.pairing`, `sync.queue`, `user.identity_watch`, `identity.watcher`, `user.record`),
 but assertions do not read prose: with the seam on, every milestone a scenario asserts also
-writes one line on the dedicated `e2e` target — `src/config.rs::e2e` owns the flag, its call
+writes one line on the dedicated `e2e` target — `src/config/e2e.rs` owns the flag, its call
 sites own the lines.
 
 | Marker | Fields | Meaning |
@@ -222,7 +222,7 @@ attempt number, delay and error chain. What is gone is the per-call success summ
 
 On wasm `std::env::var` is a stub, so `PO_E2E=1` cannot reach the app. The web surface sets
 **`localStorage.po_e2e = "1"`** instead (before any page script, via Playwright's
-`addInitScript`, and re-asserted after navigation), and `src/config.rs::e2e` reads it at
+`addInitScript`, and re-asserted after navigation), and `src/config/e2e.rs` reads it at
 event time. It is storage rather than a query parameter because the app evaluates the flag
 when it emits, and the app's own in-app navigation drops the query string.
 
@@ -360,18 +360,18 @@ PIN and password from its launch environment, so any of them can be the joiner. 
 also means the *joiner* is what gets real-hardware coverage — the platform code under
 test is the one that receives the pairing, not the one that produces it.
 
-**Harness seams — shipped, and off unless asked for** (`src/config.rs::e2e` compiles every
+**Harness seams — shipped, and off unless asked for** (`src/config/e2e.rs` compiles every
 accessor to `false`/`None` unless the build has `debug_assertions` **or** the `e2e-seams`
 cargo feature; a distributed release has neither):
 
 | Knob | Effect | Where |
 |---|---|---|
 | `PO_INSTANCE=<name>` | Veilid data dir becomes `.veilid-<name>` and the namespace `com.debanjanbasu.po-<name>`, so two instances coexist on one machine (Mac↔Mac tandem). A per-run name (the phone and the emulator use one) creates one data dir per run — the app prunes the stale siblings, see [the instance-dir bound](#the-instance-dir-bound) | `src/veilid/config.rs`, `src/veilid/core/mod.rs` |
-| `PO_E2E=1` | turns on the whole `e2e` marker channel (the marker table under [Observe](#the-three-channels)); the share screen then logs `event=share pin=<12 digits> deep_link=<po://pair?…>`, so the PIN comes from stdout instead of a UI scrape. On wasm the same flag is read from `localStorage.po_e2e` | `src/config.rs`, call sites across `src/` |
+| `PO_E2E=1` | turns on the whole `e2e` marker channel (the marker table under [Observe](#the-three-channels)); the share screen then logs `event=share pin=<12 digits> deep_link=<po://pair?…>`, so the PIN comes from stdout instead of a UI scrape. On wasm the same flag is read from `localStorage.po_e2e` | `src/config/e2e.rs`, call sites across `src/` |
 | `PO_E2E_PAIR_PIN` + `PO_E2E_PAIR_PASSWORD` | the joining side prefills those two fields and rides the screen's ordinary auto-submit — same validation, same admission path, nothing bypassed, values never logged | `src/components/auth/pairing/pair_mode.rs` |
 | `PO_E2E_PAIR_PAYLOAD` | the pairing payload itself (deep link or raw base64url), so a joiner needs no deep-link delivery either — the whole form can be filled from the environment | `src/components/auth/pairing/pair_mode.rs` |
 | `PO_E2E_ACCOUNT_PIN` | the account's second factor, so an unattended device clears the PIN gate that follows admission | `src/components/auth/pin_gate.rs` |
-| `PO_E2E_PAIRING_TTL_SECS=<n>` | the pairing payload's lifetime, replacing the production 300 s. Read by the **creating** side only (a payload carries its own `expires_at`), and by the share countdown and beacon window so the app stays self-consistent; S9 uses it to take the real expiry path in 15 s instead of a five-minute static sleep (which was 349 s of the web sweep's 799 s). Never settable in a distributed build — outside a seam build the accessor is the constant | `src/config.rs::e2e`, `src/user/pairing_crypto.rs`, `src/user/pairing_beacon.rs`, `src/components/auth/pairing/share_mode.rs` |
+| `PO_E2E_PAIRING_TTL_SECS=<n>` | the pairing payload's lifetime, replacing the production 300 s. Read by the **creating** side only (a payload carries its own `expires_at`), and by the share countdown and beacon window so the app stays self-consistent; S9 uses it to take the real expiry path in 15 s instead of a five-minute static sleep (which was 349 s of the web sweep's 799 s). Never settable in a distributed build — outside a seam build the accessor is the constant | `src/config/e2e.rs`, `src/user/pairing_crypto.rs`, `src/user/pairing_beacon.rs`, `src/components/auth/pairing/share_mode.rs` |
 
 The joiner needs no UI driver where env injection exists: `SIMCTL_CHILD_*`, `DEVICECTL_CHILD_*`
 or a plain shell.

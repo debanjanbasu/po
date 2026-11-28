@@ -191,6 +191,8 @@ The `scope: u8` mask is defined in `config::nudge` (`src/config.rs`): `0x01` cor
 
 `handle_app_message()` in `src/chat/signal/dispatch.rs` parses a signal and routes it to its handler. Conversation signals verify the shared sender proof against the claimed identity, then validate active roster membership (and the `NewData` member slot) before acting.
 
+The app-message worker awaits each handler before receiving the next message: dispatch is strict FIFO with exactly one in-flight handler and no dispatch-created detached task tree. The bounded ingress channel therefore supplies real backpressure instead of merely buffering an unbounded task fan-out. A slow signal can delay later queued messages, but the existing operation timeouts bound that work. Invite durability, acknowledgement and retry behavior, and session guards are unchanged.
+
 For `SyncNudge`, the path is:
 
 1. `src/chat/signal/wire.rs` parses tag `0x07`, `identity_key`, `scope`, UTF-8 `device_id`, and the required shared sender-proof tail; reserved tag `0x03` is rejected.

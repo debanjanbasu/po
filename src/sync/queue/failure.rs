@@ -118,9 +118,6 @@ impl SyncQueue {
                 op.attempts.saturating_add(1),
             );
         }
-        // The stored row still equals `op` (ownership verified above): hand a
-        // copy to update_op so it can skip its own load round-trip.
-        let stored_prior = op.clone();
         // Every path advances the counter: a fixed delay that never counts
         // stays immortal (`queue_policy`'s finite-retry rationale) and
         // re-reads the pending lane forever at `backoff_base`. The two
@@ -128,20 +125,19 @@ impl SyncQueue {
         // — `ack_wait_decision` for an acked-pending invite,
         // `rotation_wait_decision` for a mid-rotation op — so their retries
         // still back off exponentially rather than spinning at 1 Hz.
-        op.attempts = op.attempts.saturating_add(1);
-        op.last_error = error.to_string();
+        let next_attempts = op.attempts.saturating_add(1);
 
         let (max_retries, backoff_base, max_backoff) = queue_policy::retry_params(op.op_type);
         let decision = if rotation_pending {
             // A mid-rotation op waits for the pending key migration, so it
             // runs on a wall-clock budget (`ROTATION_WAIT_MS`) instead of the
             // attempt-counted delivery budget; the counter still advances
-            // (`attempts += 1` above) so the retries back off exponentially
+            // (`next_attempts` above) so the retries back off exponentially
             // and the lane stays finite.
             queue_policy::rotation_wait_decision(
                 op.created_at,
                 now_epoch_millis(),
-                op.attempts,
+                next_attempts,
                 backoff_base,
                 max_backoff,
             )
@@ -149,18 +145,18 @@ impl SyncQueue {
             // Re-sends of an invite the peer already holds are not delivery
             // attempts, so they run on their own wall-clock budget instead of
             // the attempt-counted delivery budget. The attempt counter still
-            // advances (`attempts += 1` above) so the lane stays finite and
+            // advances (`next_attempts` above) so the lane stays finite and
             // the log/error text stays truthful.
             queue_policy::ack_wait_decision(
                 op.created_at,
                 now_epoch_millis(),
-                op.attempts,
+                next_attempts,
                 backoff_base,
                 max_backoff,
             )
         } else {
             queue_policy::retry_decision(
-                op.attempts,
+                next_attempts,
                 now_epoch_millis(),
                 max_retries,
                 backoff_base,
@@ -169,6 +165,8 @@ impl SyncQueue {
         };
         match decision {
             RetryDecision::MoveToDeadLetter => {
+                op.attempts = next_attempts;
+                op.last_error = error.to_string();
                 match pending_ops::move_to_dead_letter(&op).await {
                     Err(error) => {
                         report_nonfatal_with_severity(
@@ -202,6 +200,14 @@ impl SyncQueue {
                 }
             }
             RetryDecision::RetryAt(scheduled_at) => {
+                // The stored row still equals `op` (ownership verified above):
+                // snapshot it before mutating the retry fields so update_op
+                // can skip its own load round-trip and reindex the old
+                // scheduled position correctly. Clone only on the retry path;
+                // the dead-letter path does not need it.
+                let stored_prior = op.clone();
+                op.attempts = next_attempts;
+                op.last_error = error.to_string();
                 op.scheduled_at = scheduled_at;
                 nonfatal!(
                     "sync.queue",

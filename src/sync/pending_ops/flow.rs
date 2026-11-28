@@ -2,6 +2,7 @@
 //! markers, and pending-to-dead-letter transitions.
 
 use anyhow::{Result, anyhow};
+use bytes::Bytes;
 
 use crate::{
     config,
@@ -20,6 +21,34 @@ use super::{
     with_indexes_mut,
 };
 
+/// Rows superseded by one operation, in both queue lanes.
+///
+/// The dead-letter lane may hold several rows for one dedup key, so the
+/// result is sorted and deduplicated before it reaches the atomic batch
+/// write.
+pub(super) fn removed_queue_rows(ids: impl IntoIterator<Item = u64>) -> Vec<(u32, u64)> {
+    let mut removed: Vec<(u32, u64)> = ids
+        .into_iter()
+        .flat_map(|id| [(COL_PENDING, id), (COL_DEAD_LETTER, id)])
+        .collect();
+    removed.sort_unstable();
+    removed.dedup();
+    removed
+}
+
+/// Expands a feed operation's covered message ids with those of the rows it
+/// supersedes, so one publish still covers every displaced message.
+pub(super) fn merged_feed_payload<'a>(
+    op: &PendingOperation,
+    superseded: impl IntoIterator<Item = &'a PendingOperation>,
+) -> Result<Bytes> {
+    let mut message_ids: Vec<_> = op.conv_feed_message_ids()?.collect();
+    for old in superseded {
+        message_ids.extend(old.conv_feed_message_ids()?);
+    }
+    Ok(PendingOperation::conv_feed_payload(message_ids))
+}
+
 pub async fn enqueue(mut op: PendingOperation) -> Result<()> {
     let _guards = lock_related_dedup_keys(&op, None).await;
     let existing = indexes()
@@ -34,24 +63,16 @@ pub async fn enqueue(mut op: PendingOperation) -> Result<()> {
         } else {
             None
         };
-        let mut message_ids: Vec<_> = op.conv_feed_message_ids()?.collect();
-        for old_op in existing_op.iter().chain(&dead_letters) {
-            message_ids.extend(old_op.conv_feed_message_ids()?);
-        }
-        op.payload = PendingOperation::conv_feed_payload(message_ids);
+        let payload = merged_feed_payload(&op, existing_op.iter().chain(&dead_letters))?;
+        op.payload = payload;
     }
 
-    let mut removed = Vec::new();
-    if let Some(old_id) = existing.filter(|old_id| *old_id != op.id) {
-        removed.push((COL_PENDING, old_id));
-        removed.push((COL_DEAD_LETTER, old_id));
-    }
-    for old_op in &dead_letters {
-        removed.push((COL_PENDING, old_op.id));
-        removed.push((COL_DEAD_LETTER, old_op.id));
-    }
-    removed.sort_unstable();
-    removed.dedup();
+    let removed = removed_queue_rows(
+        existing
+            .filter(|old_id| *old_id != op.id)
+            .into_iter()
+            .chain(dead_letters.iter().map(|old_op| old_op.id)),
+    );
     store_op_replacing(COL_PENDING, &op, &removed).await?;
 
     with_indexes_mut(|idx| idx.replace_pending(&op, &removed)).await;

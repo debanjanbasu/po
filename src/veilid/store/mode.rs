@@ -31,10 +31,8 @@ async fn compress_and_encrypt(data: Bytes, secret: &SharedSecret) -> Result<Vec<
 
 /// Storage mode for DHT operations.
 ///
-/// All modes use [`crate::config::compression::ZSTD_LEVEL`] — 12, not 22: at 22 a
-/// publish compressed for long enough to drop a frame on web, where
-/// `spawn_blocking` runs inline on the UI thread. The mode determines
-/// dictionary usage and encryption.
+/// All modes use [`crate::config::compression::ZSTD_LEVEL`] (22), zstd's
+/// maximum level. The mode determines dictionary usage and encryption.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StoreMode {
     /// Versioned dictionary-free zstd + AEAD for all application DHT data.

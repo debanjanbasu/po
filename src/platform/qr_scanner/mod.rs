@@ -8,10 +8,10 @@
 //! - Other native targets: explicit compile failure
 
 use crate::helpers::spawn_blocking;
-#[cfg(any(target_os = "ios", target_os = "macos", target_os = "android"))]
-use crate::platform::with_autorelease_pool;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::{platform::native_call, storage::background_errors::report_nonfatal};
+use crate::platform::native_call;
+#[cfg(any(target_os = "ios", target_os = "macos", target_os = "android"))]
+use crate::{platform::with_autorelease_pool, storage::background_errors::report_nonfatal};
 use bytes::Bytes;
 use image::load_from_memory;
 use rqrr::PreparedImage;

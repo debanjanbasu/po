@@ -20,8 +20,7 @@ impl TransientSetter {
     /// Show `text` for the configured duration, restarting any pending timer.
     pub fn set(&mut self, text: impl Into<String>) {
         self.message.set(Some(text.into()));
-        let generation = self.generation.peek().wrapping_add(1);
-        self.generation.set(generation);
+        let generation = self.bump_generation();
         // Signals are `Copy`; bind them locally so the task owns values
         // instead of borrowing `self` across the `'static` spawn.
         let mut message = self.message;
@@ -41,9 +40,10 @@ impl TransientSetter {
         self.message.set(None);
     }
 
-    fn bump_generation(&mut self) {
+    fn bump_generation(&mut self) -> u64 {
         let generation = self.generation.peek().wrapping_add(1);
         self.generation.set(generation);
+        generation
     }
 }
 

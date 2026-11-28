@@ -1,7 +1,7 @@
 //! Dead-letter queue actions: retry/dismiss individual or all ops, with
 //! arbitration against newer dedup owners on stale retries.
 
-use std::{collections::HashMap, future::Future, sync::Arc};
+use std::{collections::HashMap, future::Future, iter, sync::Arc};
 
 use anyhow::{Result, anyhow};
 use tokio::sync::oneshot;
@@ -22,7 +22,8 @@ use crate::{
 };
 
 use super::{
-    COL_DEAD_LETTER, COL_PENDING, dedup_key_for, delete_row_or_mark_cleanup, flow::complete_locked,
+    COL_DEAD_LETTER, COL_PENDING, dedup_key_for, delete_row_or_mark_cleanup,
+    flow::{complete_locked, merged_feed_payload, removed_queue_rows},
     indexes, list_dead_letter, load_op_opt, load_ops_by_ids, lock_related_dedup_keys,
     related_dead_letters, store_op_replacing, with_indexes_mut,
 };
@@ -132,7 +133,6 @@ async fn retry_from_dead_letter_inner(
         let Some(mut op) = load_op_opt(COL_DEAD_LETTER, id).await? else {
             return Ok(false);
         };
-        let mut removed = vec![(COL_PENDING, id), (COL_DEAD_LETTER, id)];
         let dedup_key = dedup_key_for(&op);
         let owner_id = indexes().read().await.pending_id_for_dedup(&dedup_key);
         let pending_owner = if let Some(owner_id) = owner_id {
@@ -145,12 +145,9 @@ async fn retry_from_dead_letter_inner(
         } else {
             related_dead_letters(&op).await?
         };
-        let merged_feed_payload = if op.op_type == OpType::ConvFeedSync {
-            let mut message_ids: Vec<_> = op.conv_feed_message_ids()?.collect();
-            for old in pending_owner.iter().chain(&dead_letters) {
-                message_ids.extend(old.conv_feed_message_ids()?);
-            }
-            Some(PendingOperation::conv_feed_payload(message_ids))
+        let merged_payload = if op.op_type == OpType::ConvFeedSync {
+            let payload = merged_feed_payload(&op, pending_owner.iter().chain(&dead_letters))?;
+            Some(payload)
         } else {
             None
         };
@@ -161,23 +158,18 @@ async fn retry_from_dead_letter_inner(
             }
             return Ok(false);
         }
-        if let Some(payload) = merged_feed_payload {
+        if let Some(payload) = merged_payload {
             op.payload = payload;
         }
-        if let Some(owner_id) = owner_id {
-            removed.push((COL_PENDING, owner_id));
-            removed.push((COL_DEAD_LETTER, owner_id));
-        }
-        for old in &dead_letters {
-            removed.push((COL_PENDING, old.id));
-            removed.push((COL_DEAD_LETTER, old.id));
-        }
+        let removed = removed_queue_rows(
+            iter::once(id)
+                .chain(owner_id)
+                .chain(dead_letters.iter().map(|old| old.id)),
+        );
 
         op.attempts = 0;
         op.last_error.clear();
         op.scheduled_at = 0;
-        removed.sort_unstable();
-        removed.dedup();
         store_op_replacing(COL_PENDING, &op, &removed).await?;
 
         with_indexes_mut(|idx| idx.replace_pending(&op, &removed)).await;

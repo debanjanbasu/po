@@ -11,10 +11,8 @@
 //!
 //! The tables below are **native level-22** measurements (automerge 0.12 +
 //! autosurgeon 0.14, accumulated CRDT history, trained dictionary
-//! `assets/dict/structured.zdict`), taken before `ZSTD_LEVEL` moved 22 → 12;
-//! the level-12 byte sizes are ~1-3% larger, and the CPU numbers are ceilings
-//! roughly 9× above the shipped ones. The *comparison* they justify — DEFLATE
-//! plus zstd beats raw plus zstd — is unaffected:
+//! `assets/dict/structured.zdict`) and describe the shipped compression level.
+//! They justify the current form: DEFLATE plus zstd beats raw plus zstd.
 //!
 //! | doc | `save_nocompress()` | `save()` (DEFLATE) | zstd L22(dict, `save_nocompress()`) | zstd L22(dict, `save()`) |
 //! |---|---|---|---|---|

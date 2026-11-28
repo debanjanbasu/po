@@ -23,11 +23,18 @@ use veilid_core::DHTReportScope;
 
 use crate::{
     chat::{
-        conversation::ConversationIndex, manager, storage, watcher::handle_conversation_change,
+        contact::{ContactList, ContactStatus},
+        conversation::ConversationIndex,
+        feed::MessageStatus,
+        manager,
+        session_flow::retry_pending_contact,
+        storage,
+        watcher::handle_conversation_change,
     },
     config,
     helpers::concurrency,
     helpers::{async_utils::retry_after_session_stable_delay, store_lock::recover_poison},
+    models::pending_operation::{OpType, PendingOperation},
     session::epoch as session,
     storage::{background_errors::report_nonfatal, store_trait::load_local},
     user::ctx::UserCtx,
@@ -45,10 +52,100 @@ use super::{full_conversation_subkeys, hydrate_conversation, store_failed_hydrat
 /// same pass — the bool only feeds `sync_watch_set` — so they live in one
 /// function instead of two byte-identical wrappers.
 pub async fn arm_and_catch_up(sweep_all: bool) {
+    if sweep_all {
+        reconcile_pending_local_work().await;
+    }
     let Some((ctx, guard, sweep_keys)) = sync_watch_set(sweep_all).await else {
         return;
     };
     sweep_known(&ctx, guard, sweep_keys).await;
+}
+
+/// Re-queues durable local work whose process stopped between its local commit
+/// and queue enqueue. Queue squashing folds these IDs into any existing feed op.
+async fn reconcile_pending_local_work() {
+    let Some(ctx) = UserCtx::try_current() else {
+        return;
+    };
+    let guard = session::SessionGuard::capture();
+
+    match storage::list_manifest_keys(&ctx.account_id).await {
+        Ok(keys) => {
+            for key in keys {
+                if !guard.is_current() {
+                    return;
+                }
+                if key.is_empty() {
+                    continue;
+                }
+                let conv = match storage::load_for_account(&ctx.account_id, &key).await {
+                    Ok(conv) => conv,
+                    Err(error) => {
+                        report_nonfatal(
+                            "chat.catchup",
+                            "Failed to load conversation for pending reconciliation",
+                            error,
+                        );
+                        continue;
+                    }
+                };
+                let message_ids: Vec<_> = conv
+                    .messages
+                    .iter()
+                    .filter(|message| message.status == MessageStatus::Pending)
+                    .map(|message| message.msg_id.as_ref())
+                    .collect();
+                if message_ids.is_empty() {
+                    continue;
+                }
+                if let Err(error) = ctx
+                    .enqueue_for_target(
+                        OpType::ConvFeedSync,
+                        PendingOperation::conv_feed_payload(message_ids),
+                        &key,
+                    )
+                    .await
+                {
+                    report_nonfatal(
+                        "chat.catchup",
+                        "Failed to reconcile pending conversation feed",
+                        error,
+                    );
+                }
+            }
+        }
+        Err(error) => report_nonfatal(
+            "chat.catchup",
+            "Failed to enumerate conversations for pending reconciliation",
+            error,
+        ),
+    }
+
+    let contacts = match load_local::<ContactList>(ctx.storage_key()).await {
+        Ok(contacts) => contacts,
+        Err(error) => {
+            report_nonfatal(
+                "chat.catchup",
+                "Failed to load contacts for pending reconciliation",
+                error,
+            );
+            return;
+        }
+    };
+    for contact in contacts.contacts.values().filter(|contact| {
+        contact.status == ContactStatus::Pending && contact.conversation_record_key.is_empty()
+    }) {
+        if !guard.is_current() {
+            return;
+        }
+        if let Err(error) = retry_pending_contact(contact).await {
+            report_nonfatal(
+                "chat.catchup",
+                "Failed to reconcile pending contact setup",
+                error,
+            );
+        }
+    }
 }
 
 /// Sweeps one already-local conversation after its DHT watch is re-armed.

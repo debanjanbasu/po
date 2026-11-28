@@ -9,7 +9,9 @@ use crate::platform::share::pick_backup_file;
 use crate::{
     components::{
         settings::shell::SettingsCard,
-        shared::{ModalDialog, RetryButton, Spinner, SpinnerSize, close_modal_dialog},
+        shared::{
+            AutoSubmitGate, ModalDialog, RetryButton, Spinner, SpinnerSize, close_modal_dialog,
+        },
     },
     config::backup::MAX_FILE_BYTES,
     helpers::spawn,
@@ -73,7 +75,7 @@ pub(super) fn ImportSection(
                 input_epoch.with_mut(|n| *n = n.wrapping_add(1));
                 match result {
                     Ok(bytes) => {
-                        file_bytes.set(Some(bytes.to_vec()));
+                        file_bytes.set(Some(bytes.into()));
                         password.set(String::new());
                     }
                     Err(detail) => {
@@ -182,7 +184,7 @@ pub(super) fn ImportSection(
 #[component]
 pub(super) fn ImportPasswordModal(import_dialog_id: String, mut state: ImportState) -> Element {
     let mut attempt = use_signal(|| 0u64);
-    let mut last_attempted_password = use_signal(|| None::<String>);
+    let password_gate = AutoSubmitGate::<String>::use_gate();
 
     let mut start_decrypt = move |password_str: String| {
         if (state.importing)() {
@@ -268,10 +270,9 @@ pub(super) fn ImportPasswordModal(import_dialog_id: String, mut state: ImportSta
         if validate_password_msg(&password).is_some() {
             return;
         }
-        if last_attempted_password().as_deref() == Some(password.as_str()) {
+        if !password_gate.claim(password.clone()) {
             return;
         }
-        last_attempted_password.set(Some(password.clone()));
         start_decrypt(password);
     });
 
@@ -286,7 +287,7 @@ pub(super) fn ImportPasswordModal(import_dialog_id: String, mut state: ImportSta
         Callback::new(move |()| {
             attempt.with_mut(|value| *value = value.wrapping_add(1));
             close_modal_dialog(&dialog_id);
-            last_attempted_password.set(None);
+            password_gate.clear();
             state.importing.set(false);
             state.file_bytes.set(None);
             state.password.set(String::new());
@@ -310,8 +311,8 @@ pub(super) fn ImportPasswordModal(import_dialog_id: String, mut state: ImportSta
                         value: "{state.password}",
                         oninput: move |ev| {
                             let next = ev.value();
-                            if last_attempted_password.peek().as_deref() != Some(next.as_str()) {
-                                last_attempted_password.set(None);
+                            if password_gate.peek().as_deref() != Some(next.as_str()) {
+                                password_gate.clear();
                             }
                             state.error.set(None);
                             state.password.set(next);
@@ -320,7 +321,7 @@ pub(super) fn ImportPasswordModal(import_dialog_id: String, mut state: ImportSta
                             if ev.key() == Key::Named(NamedKey::Enter) && !(state.importing)() {
                                 let password = state.password.read().clone();
                                 if !password.is_empty() {
-                                    last_attempted_password.set(Some(password.clone()));
+                                    password_gate.claim(password.clone());
                                     start_decrypt(password);
                                 }
                             }
@@ -342,7 +343,7 @@ pub(super) fn ImportPasswordModal(import_dialog_id: String, mut state: ImportSta
                         onclick: move |()| {
                             let password = state.password.read().clone();
                             if !password.is_empty() {
-                                last_attempted_password.set(Some(password.clone()));
+                                password_gate.claim(password.clone());
                                 start_decrypt(password);
                             }
                         },

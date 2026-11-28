@@ -8,7 +8,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import http from 'node:http';
-import { extname, join, normalize } from 'node:path';
+import { extname, join, resolve, sep } from 'node:path';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 import { exec } from '../lib/proc.ts';
 import { ensureBuilt, E2E_SEAM_FEATURE } from '../lib/build.ts';
@@ -118,17 +118,18 @@ async function serveStatic(root: string): Promise<{ port: number; close(): Promi
     '.woff2': 'font/woff2',
     '.webp': 'image/webp',
   };
+  const rootPath = resolve(root);
   // The listener must return void; the per-request work stays async inside.
   const server = http.createServer((req, res) => {
     void (async () => {
       try {
         const url = (req.url ?? '/').split('?')[0];
-        let path = normalize(join(root, url));
-        if (!path.startsWith(root)) path = join(root, 'index.html');
+        let path = resolve(rootPath, `.${url}`);
+        if (path !== rootPath && !path.startsWith(`${rootPath}${sep}`)) path = join(rootPath, 'index.html');
         try {
           if ((await stat(path)).isDirectory()) path = join(path, 'index.html');
         } catch {
-          path = join(root, 'index.html');
+          path = join(rootPath, 'index.html');
         }
         const body = await readFile(path);
         res.writeHead(200, {
@@ -138,8 +139,9 @@ async function serveStatic(root: string): Promise<{ port: number; close(): Promi
         });
         res.end(body);
       } catch (e) {
-        res.writeHead(500);
-        res.end(String(e));
+        console.error('web static server request failed:', e);
+        res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+        res.end('Internal server error');
       }
     })();
   });
@@ -151,9 +153,9 @@ async function serveStatic(root: string): Promise<{ port: number; close(): Promi
   return {
     port,
     close: () => {
-      const { promise, resolve } = Promise.withResolvers<void>();
+      const { promise, resolve: onClose } = Promise.withResolvers<void>();
       server.close(() => {
-        resolve();
+        onClose();
       });
       return promise;
     },

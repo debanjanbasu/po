@@ -1,10 +1,12 @@
 //! Coalescing dispatcher for DHT `ValueChange` events.
 //!
-//! Prevents unbounded spawn fan-out by:
-//! - limiting concurrent handlers
+//! Bounds the queued dirty-key set by:
 //! - coalescing duplicate keys while one is already in flight
 //! - collapsing overflow into a bounded forced-resync sweep instead of
 //!   dropping changes when the dirty-key set is saturated
+//!
+//! Dispatched handlers still fan out without a permit pool; only the queued
+//! coalescer state is bounded.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -331,7 +333,7 @@ async fn handle_change(key: Arc<str>, change: Box<VeilidValueChange>, force_resy
             guard,
             Arc::clone(&key),
             force_resync || change.count == 0,
-            Some(change.subkeys.clone()),
+            Some(&change.subkeys),
             pushed,
             "Failed to load local conversation while dispatching DHT change",
         )
@@ -360,7 +362,7 @@ async fn dispatch_conversation(
     guard: session::SessionGuard,
     key: Arc<str>,
     force_resync: bool,
-    change_subkeys: Option<ValueSubkeyRangeSet>,
+    change_subkeys: Option<&ValueSubkeyRangeSet>,
     pushed: Option<store::PushedValue>,
     err_context: &'static str,
 ) -> bool {
@@ -372,7 +374,7 @@ async fn dispatch_conversation(
             let subkeys = if force_resync {
                 record::full_conversation_subkeys(conv.roster.members.len())
             } else {
-                change_subkeys.unwrap_or_default()
+                change_subkeys.cloned().unwrap_or_default()
             };
             watcher::handle_conversation_change_loaded(
                 ctx.clone(),

@@ -86,8 +86,7 @@ pub(super) async fn resync_with_scope(scope: ResyncScope) -> bool {
                 .await;
 
                 if scope == ResyncScope::Full
-                    && let Err(e) =
-                        dict_sync::check_and_sync(user_key.clone(), &identity.secret).await
+                    && let Err(e) = dict_sync::check_and_sync(user_key, &identity.secret).await
                     && store::report_nonfatal_unless_network(
                         "identity.watcher",
                         "Dict sync check failed",

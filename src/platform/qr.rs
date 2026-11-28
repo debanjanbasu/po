@@ -5,7 +5,7 @@ use std::io::Cursor;
 use anyhow::{Error, Result};
 use bytes::Bytes;
 use image::{ExtendedColorType, Luma, codecs::webp::WebPEncoder};
-use qrcode::{QrCode, render::Renderer};
+use qrcode::QrCode;
 
 use crate::{config::e2e, helpers::spawn_blocking, platform::qr_scanner};
 
@@ -39,8 +39,8 @@ pub async fn report_qr_round_trip(webp: &Bytes, link: &str) {
 ///
 fn render_webp(data: &str, scale: u32) -> Result<Vec<u8>> {
     let code = QrCode::new(data.as_bytes())?;
-    let modules = code.to_colors();
-    let image = Renderer::<Luma<u8>>::new(&modules, code.width(), 4)
+    let image = code
+        .render::<Luma<u8>>()
         .module_dimensions(scale, scale)
         .build();
     let (img_width, img_height) = image.dimensions();

@@ -1,8 +1,6 @@
 //! `FormFieldHandle` + `use_form_field_manual`: value/dirty/error/valid state for
 //! manually validated form fields.
 
-use std::rc::Rc;
-
 use dioxus::prelude::*;
 
 #[derive(Clone, Copy)]
@@ -20,7 +18,6 @@ pub fn use_form_field_manual(
 ) -> FormFieldHandle {
     let value = use_signal(|| initial.to_owned());
     let is_dirty = use_signal(|| false);
-    let validator = Rc::new(validator);
 
     let error = use_memo(move || {
         let v = value.read();

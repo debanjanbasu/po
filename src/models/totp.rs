@@ -37,26 +37,37 @@ impl TotpAlgorithm {
             Self::SHA512 => "SHA512",
         }
     }
+}
 
-    /// Parse from a stored string, defaulting to SHA1 for unknown values.
-    #[must_use]
-    pub fn from_str_lossy(s: &str) -> Self {
+/// Typed error for a TOTP algorithm string or library variant this build does
+/// not support; unknown values must never silently become SHA1.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("unsupported TOTP algorithm: {0:?}")]
+pub struct UnsupportedTotpAlgorithm(pub String);
+
+impl std::str::FromStr for TotpAlgorithm {
+    type Err = UnsupportedTotpAlgorithm;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "SHA256" => Self::SHA256,
-            "SHA512" => Self::SHA512,
-            _ => Self::SHA1,
+            "SHA1" => Ok(Self::SHA1),
+            "SHA256" => Ok(Self::SHA256),
+            "SHA512" => Ok(Self::SHA512),
+            other => Err(UnsupportedTotpAlgorithm(other.to_string())),
         }
     }
 }
 
-impl From<Algorithm> for TotpAlgorithm {
-    fn from(a: Algorithm) -> Self {
+impl TryFrom<Algorithm> for TotpAlgorithm {
+    type Error = UnsupportedTotpAlgorithm;
+
+    fn try_from(a: Algorithm) -> Result<Self, Self::Error> {
         match a {
-            Algorithm::SHA256 => Self::SHA256,
-            Algorithm::SHA512 => Self::SHA512,
-            // `Algorithm` is non-exhaustive (e.g. feature-gated Steam variant);
-            // fall back to the RFC default like `from_str_lossy`.
-            _ => Self::SHA1,
+            Algorithm::SHA1 => Ok(Self::SHA1),
+            Algorithm::SHA256 => Ok(Self::SHA256),
+            Algorithm::SHA512 => Ok(Self::SHA512),
+            // `Algorithm` is non-exhaustive (e.g. feature-gated Steam variant).
+            other => Err(UnsupportedTotpAlgorithm(other.as_str().to_string())),
         }
     }
 }
@@ -91,7 +102,7 @@ impl TotpTokenData {
         issuer: String,
         account_name: String,
         secret: String,
-        algorithm: Algorithm,
+        algorithm: TotpAlgorithm,
         digits: u32,
         period: u32,
     ) -> Self {
@@ -100,7 +111,7 @@ impl TotpTokenData {
             issuer,
             account_name,
             secret,
-            algorithm: algorithm.into(),
+            algorithm,
             digits,
             period,
             created_at: now,
@@ -117,7 +128,7 @@ impl TotpTokenData {
         let secret =
             Secret::try_from_base32(&self.secret).map_err(|e| anyhow!("invalid secret: {e}"))?;
         Builder::new()
-            .with_algorithm(self.algorithm.into())
+            .with_algorithm(Algorithm::from(self.algorithm))
             .with_digits(
                 u8::try_from(self.digits).map_err(|e| anyhow!("invalid TOTP digit count: {e}"))?,
             )
@@ -145,6 +156,8 @@ pub enum TotpUriError {
     Secret(String),
     #[error("TOTP issuer or account name must not contain NUL bytes.")]
     ContainsNul,
+    #[error("{0}")]
+    UnsupportedAlgorithm(#[from] UnsupportedTotpAlgorithm),
 }
 
 /// Parses a TOTP QR code URI (`otpauth://totp/...`) into a validated [`TotpTokenData`].
@@ -155,13 +168,15 @@ pub enum TotpUriError {
 /// # Errors
 ///
 /// Returns a typed [`TotpUriError`] when the URI is malformed, not an `otpauth://totp/...`
-/// URI, or contains an invalid/unsupported TOTP payload (such as a secret under 128 bits).
+/// URI, or contains an unsupported algorithm or other invalid payload (such as a secret
+/// under 128 bits).
 pub fn parse_totp_uri(uri: &str) -> Result<TotpTokenData, TotpUriError> {
     if !uri.starts_with("otpauth://totp/") {
         return Err(TotpUriError::InvalidPrefix);
     }
     let totp = Totp::from_url(uri)?;
     let period = u32::try_from(totp.step()).map_err(|_| TotpUriError::PeriodOutOfRange)?;
+    let algorithm = TotpAlgorithm::try_from(totp.algorithm())?;
     let issuer = totp.issuer().unwrap_or_default().to_string();
     let account_name = totp.account_name().to_string();
     if issuer.contains('\0') || account_name.contains('\0') {
@@ -171,7 +186,7 @@ pub fn parse_totp_uri(uri: &str) -> Result<TotpTokenData, TotpUriError> {
         issuer,
         account_name,
         totp.secret().to_base32(),
-        totp.algorithm(),
+        algorithm,
         u32::from(totp.digits()),
         period,
     );
@@ -251,7 +266,12 @@ fn unpack_totp_list(bytes: &[u8]) -> Result<(TotpTokenList, u32)> {
                 issuer: token.issuer().get().as_str()?.to_string(),
                 account_name: token.account_name().get().as_str()?.to_string(),
                 secret: token.secret().get().as_str()?.to_string(),
-                algorithm: TotpAlgorithm::from_str_lossy(token.algorithm().get().as_str()?),
+                algorithm: token
+                    .algorithm()
+                    .get()
+                    .as_str()?
+                    .parse::<TotpAlgorithm>()
+                    .map_err(|e| anyhow!("stored token has {e}"))?,
                 digits: token.digits(),
                 period: token.period(),
                 created_at: token.created_at(),

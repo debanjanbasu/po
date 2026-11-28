@@ -21,7 +21,6 @@ use crate::{
     },
     helpers::{
         async_utils::{now_epoch_millis, retry_after_session_stable_delay},
-        spawn,
         store_lock::recover_poison,
     },
     // Aliased: the sync-nudge handler also has a local `device_id` binding
@@ -188,14 +187,14 @@ async fn authenticate_conversation_signal(
     })
 }
 
-fn spawn_authenticated_conversation_signal<F, Fut>(
+async fn handle_authenticated_conversation_signal<F, Fut>(
     signal: PeerSignal,
     member_subkey: Option<u32>,
     require_open_conversation: bool,
     on_authenticated: F,
 ) where
-    F: FnOnce(AuthenticatedConversationSignal, session::SessionGuard) -> Fut + 'static,
-    Fut: Future<Output = ()> + 'static,
+    F: FnOnce(AuthenticatedConversationSignal, session::SessionGuard) -> Fut,
+    Fut: Future<Output = ()>,
 {
     let conv_key_str: Arc<str> = Arc::from(signal.conversation_key().to_string());
     // Presence-style signals (typing) only matter for the conversation on
@@ -206,53 +205,53 @@ fn spawn_authenticated_conversation_signal<F, Fut>(
     }
 
     let guard = session::SessionGuard::capture();
-    spawn(async move {
-        let Some(sender_identity) = verify_claimed_signal_identity(
-            &signal,
-            signal.sender_identity(),
-            "conversation",
-            &conv_key_str,
-        )
-        .await
-        else {
-            return;
-        };
-        let Some(authenticated) =
-            authenticate_conversation_signal(conv_key_str, sender_identity, member_subkey).await
-        else {
-            return;
-        };
-        if !guard.is_current()
-            || (require_open_conversation && !is_open_conversation(&authenticated.conv_key_str))
-        {
-            return;
-        }
-        on_authenticated(authenticated, guard).await;
-    });
+    let Some(sender_identity) = verify_claimed_signal_identity(
+        &signal,
+        signal.sender_identity(),
+        "conversation",
+        &conv_key_str,
+    )
+    .await
+    else {
+        return;
+    };
+    let Some(authenticated) =
+        authenticate_conversation_signal(conv_key_str, sender_identity, member_subkey).await
+    else {
+        return;
+    };
+    if !guard.is_current()
+        || (require_open_conversation && !is_open_conversation(&authenticated.conv_key_str))
+    {
+        return;
+    }
+    on_authenticated(authenticated, guard).await;
 }
 
-fn handle_typing_signal(signal: PeerSignal) {
-    spawn_authenticated_conversation_signal(signal, None, true, |signal, _| async move {
+async fn handle_typing_signal(signal: PeerSignal) {
+    handle_authenticated_conversation_signal(signal, None, true, |signal, _| async move {
         apply_typing_from_peer(
             &signal.conv_key_str,
             signal.sender_identity,
             now_epoch_millis(),
         );
-    });
+    })
+    .await;
 }
 
-fn handle_stop_typing_signal(signal: PeerSignal) {
-    spawn_authenticated_conversation_signal(signal, None, true, |signal, _| async move {
+async fn handle_stop_typing_signal(signal: PeerSignal) {
+    handle_authenticated_conversation_signal(signal, None, true, |signal, _| async move {
         clear_typing_from_peer(&signal.conv_key_str, &signal.sender_identity);
-    });
+    })
+    .await;
 }
 
-fn handle_new_data_signal(signal: PeerSignal) {
+async fn handle_new_data_signal(signal: PeerSignal) {
     let SignalPayload::NewData { member_subkey, .. } = &signal.payload else {
         return;
     };
     let member_subkey = *member_subkey;
-    spawn_authenticated_conversation_signal(
+    handle_authenticated_conversation_signal(
         signal,
         Some(member_subkey),
         false,
@@ -295,10 +294,11 @@ fn handle_new_data_signal(signal: PeerSignal) {
                 .await;
             }
         },
-    );
+    )
+    .await;
 }
 
-fn handle_conversation_invite_signal(signal: PeerSignal) {
+async fn handle_conversation_invite_signal(signal: PeerSignal) {
     let (manifest_key, inviter_key) = match &signal.payload {
         SignalPayload::ConversationInvite {
             manifest_key,
@@ -309,37 +309,33 @@ fn handle_conversation_invite_signal(signal: PeerSignal) {
     };
     let guard = session::SessionGuard::capture();
     let manifest_key_str = manifest_key.to_string();
-    spawn(async move {
-        if !guard.is_current() {
-            return;
-        }
-        if verify_claimed_signal_identity(
-            &signal,
-            &inviter_key,
-            "conversation invite",
-            &manifest_key_str,
-        )
-        .await
-        .is_none()
-        {
-            return;
-        }
-        if !guard.is_current() {
-            return;
-        }
-        if let Err(e) =
-            handle_conversation_invite(manifest_key, &manifest_key_str, inviter_key).await
-        {
-            report_nonfatal("chat.signal", "Failed to handle conversation invite", e);
-            push_background_error(
-                "chat.signal",
-                "Failed to process an incoming conversation invite.",
-            );
-        }
-    });
+    if !guard.is_current() {
+        return;
+    }
+    if verify_claimed_signal_identity(
+        &signal,
+        &inviter_key,
+        "conversation invite",
+        &manifest_key_str,
+    )
+    .await
+    .is_none()
+    {
+        return;
+    }
+    if !guard.is_current() {
+        return;
+    }
+    if let Err(e) = handle_conversation_invite(manifest_key, &manifest_key_str, inviter_key).await {
+        report_nonfatal("chat.signal", "Failed to handle conversation invite", e);
+        push_background_error(
+            "chat.signal",
+            "Failed to process an incoming conversation invite.",
+        );
+    }
 }
 
-fn handle_conversation_invite_ack_signal(signal: PeerSignal) {
+async fn handle_conversation_invite_ack_signal(signal: PeerSignal) {
     let (manifest_key, owner_key, ack_sender_key) = match &signal.payload {
         SignalPayload::ConversationInviteAck {
             manifest_key,
@@ -355,57 +351,53 @@ fn handle_conversation_invite_ack_signal(signal: PeerSignal) {
     };
     let guard = session::SessionGuard::capture();
     let manifest_key_str = manifest_key.to_string();
-    spawn(async move {
-        if !guard.is_current() {
-            return;
-        }
-        let Some(ctx) = UserCtx::try_current() else {
-            return;
-        };
-        let Ok(local_identity) = parse_record_key(ctx.dht_key.as_ref()) else {
-            warn!(
-                "Rejected conversation invite ack for {} because the local inviter identity is invalid",
-                manifest_key_str,
-            );
-            return;
-        };
-        if local_identity != owner_key {
-            warn!(
-                "Rejected conversation invite ack for {} because it targeted inviter {} instead of {}",
-                manifest_key_str, owner_key, local_identity,
-            );
-            return;
-        }
-        if verify_claimed_signal_identity(
-            &signal,
-            &ack_sender_key,
-            "conversation invite ack",
-            &manifest_key_str,
-        )
-        .await
-        .is_none()
-        {
-            return;
-        }
-        if !guard.is_current() {
-            return;
-        }
-        if let Err(e) =
-            handle_conversation_invite_ack(manifest_key, owner_key, ack_sender_key).await
-        {
-            report_nonfatal("chat.signal", "Failed to handle conversation invite ack", e);
-            push_background_error(
-                "chat.signal",
-                "Failed to acknowledge a delivered conversation invite.",
-            );
-        }
-    });
+    if !guard.is_current() {
+        return;
+    }
+    let Some(ctx) = UserCtx::try_current() else {
+        return;
+    };
+    let Ok(local_identity) = parse_record_key(ctx.dht_key.as_ref()) else {
+        warn!(
+            "Rejected conversation invite ack for {} because the local inviter identity is invalid",
+            manifest_key_str,
+        );
+        return;
+    };
+    if local_identity != owner_key {
+        warn!(
+            "Rejected conversation invite ack for {} because it targeted inviter {} instead of {}",
+            manifest_key_str, owner_key, local_identity,
+        );
+        return;
+    }
+    if verify_claimed_signal_identity(
+        &signal,
+        &ack_sender_key,
+        "conversation invite ack",
+        &manifest_key_str,
+    )
+    .await
+    .is_none()
+    {
+        return;
+    }
+    if !guard.is_current() {
+        return;
+    }
+    if let Err(e) = handle_conversation_invite_ack(manifest_key, owner_key, ack_sender_key).await {
+        report_nonfatal("chat.signal", "Failed to handle conversation invite ack", e);
+        push_background_error(
+            "chat.signal",
+            "Failed to acknowledge a delivered conversation invite.",
+        );
+    }
 }
 
 /// Handles a same-account sync nudge from a sibling device: verifies the
 /// proof was signed by this account's own identity keypair (only sibling
 /// devices hold it), then pulls the nudged scopes from the DHT.
-fn handle_sync_nudge_signal(signal: PeerSignal) {
+async fn handle_sync_nudge_signal(signal: PeerSignal) {
     let SignalPayload::SyncNudge {
         identity_key,
         scope,
@@ -419,43 +411,41 @@ fn handle_sync_nudge_signal(signal: PeerSignal) {
     let scope = *scope;
     let sender_device = Arc::clone(device_id);
     let guard = session::SessionGuard::capture();
-    spawn(async move {
-        // Only meaningful when the nudge names our own identity record.
-        let Some(ctx) = UserCtx::try_current() else {
-            return;
-        };
-        let Ok(own_identity) = parse_record_key(ctx.dht_key.as_ref()) else {
-            return;
-        };
-        if own_identity != identity_key {
-            return;
-        }
-        // Ignore our own nudges (defense in depth — the sender already
-        // excludes this device's route).
-        match current_device_id().await {
-            Ok(own_device) if own_device == sender_device => return,
-            Err(_) => return,
-            Ok(_) => {}
-        }
-        if verify_claimed_signal_identity(
-            &signal,
-            &identity_key,
-            "sync nudge from device",
-            &sender_device,
-        )
-        .await
-        .is_none()
-        {
-            return;
-        }
-        if !guard.is_current() {
-            return;
-        }
-        // Tier-2 (nudge) ground truth: a line here proves the sibling's
-        // private-route signal reached this device.
-        debug!("Sync nudge received from sibling device (scope={scope:#04x}); pulling");
-        handle_sync_nudge(scope).await;
-    });
+    // Only meaningful when the nudge names our own identity record.
+    let Some(ctx) = UserCtx::try_current() else {
+        return;
+    };
+    let Ok(own_identity) = parse_record_key(ctx.dht_key.as_ref()) else {
+        return;
+    };
+    if own_identity != identity_key {
+        return;
+    }
+    // Ignore our own nudges (defense in depth — the sender already
+    // excludes this device's route).
+    match current_device_id().await {
+        Ok(own_device) if own_device == sender_device => return,
+        Err(_) => return,
+        Ok(_) => {}
+    }
+    if verify_claimed_signal_identity(
+        &signal,
+        &identity_key,
+        "sync nudge from device",
+        &sender_device,
+    )
+    .await
+    .is_none()
+    {
+        return;
+    }
+    if !guard.is_current() {
+        return;
+    }
+    // Tier-2 (nudge) ground truth: a line here proves the sibling's
+    // private-route signal reached this device.
+    debug!("Sync nudge received from sibling device (scope={scope:#04x}); pulling");
+    handle_sync_nudge(scope).await;
 }
 
 /// Handles an incoming `AppMessage` by parsing it as a `PeerSignal` and
@@ -464,7 +454,7 @@ fn handle_sync_nudge_signal(signal: PeerSignal) {
 /// sender proof. Private-route `app_message`s do not expose trusted sender
 /// metadata when Veilid sender privacy is enabled, so route provenance is not
 /// used for typing or new-data state changes.
-pub fn handle_app_message(message: &[u8]) {
+pub async fn handle_app_message(message: &[u8]) {
     let signal = match PeerSignal::from_bytes(message) {
         Ok(signal) => signal,
         Err(error) => {
@@ -474,19 +464,19 @@ pub fn handle_app_message(message: &[u8]) {
     };
 
     match signal.payload {
-        SignalPayload::Typing { .. } => handle_typing_signal(signal),
+        SignalPayload::Typing { .. } => handle_typing_signal(signal).await,
         SignalPayload::StopTyping { .. } => {
-            handle_stop_typing_signal(signal);
+            handle_stop_typing_signal(signal).await;
         }
-        SignalPayload::NewData { .. } => handle_new_data_signal(signal),
+        SignalPayload::NewData { .. } => handle_new_data_signal(signal).await,
         SignalPayload::ConversationInvite { .. } => {
-            handle_conversation_invite_signal(signal);
+            handle_conversation_invite_signal(signal).await;
         }
         SignalPayload::ConversationInviteAck { .. } => {
-            handle_conversation_invite_ack_signal(signal);
+            handle_conversation_invite_ack_signal(signal).await;
         }
         SignalPayload::SyncNudge { .. } => {
-            handle_sync_nudge_signal(signal);
+            handle_sync_nudge_signal(signal).await;
         }
     }
 }

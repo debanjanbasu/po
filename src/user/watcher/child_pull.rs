@@ -194,7 +194,7 @@ pub(in crate::user) async fn pull_identity_children(
 
 /// Unwrap a child pull result, reporting failures through the standard
 /// funnel and treating them as "nothing changed, nothing stale".
-pub(in crate::user) async fn child_pull_outcome<T: CrdtModel>(
+async fn child_pull_outcome<T: CrdtModel>(
     result: Result<PullOutcome>,
     what: &str,
     ctx: &UserCtx,

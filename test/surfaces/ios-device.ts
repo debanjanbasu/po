@@ -226,7 +226,7 @@ async function resolveApp(ctx: { note(m: string): void }): Promise<string> {
       // only injects the iOS launcher icons the plist declares, since dx's
       // `dx build` has no icon pipeline (`[bundle].icon` only affects
       // `dx bundle`).
-      const fix = await exec('bash', [join(process.cwd(), 'scripts', 'fix-bundle-case.sh'), base], {
+      const fix = await exec(join(process.cwd(), 'scripts', 'fix-bundle-case.sh'), [base], {
         cwd: process.cwd(),
         timeoutMs: 120_000,
         allowFail: true,
@@ -406,7 +406,7 @@ export class IosDeviceSurface {
    */
   private async findInstalledId(): Promise<boolean> {
     const apps = await this.devicectl(['device', 'info', 'apps', '--device', this.device.udid], 60_000);
-    const found = apps.stdout.match(new RegExp(`[A-Za-z0-9.-]*${BUNDLE_ID.replace(/\./gu, '\\.')}`, 'u'))?.[0];
+    const found = apps.stdout.match(new RegExp(`[A-Za-z0-9.-]*${BUNDLE_ID.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u'))?.[0];
     if (found === undefined) return false;
     this.installedId = found;
     this.build['bundle_id'] = found;

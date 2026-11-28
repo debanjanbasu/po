@@ -11,14 +11,14 @@
 //! input (pages, keys, route ids), so a completion-ordered stream would make
 //! every call site carry an index. `join_all` keeps the input order for free.
 //!
-//! Bounding is *not* provided here on purpose: it is for the one case a budget
-//! is genuinely load-bearing — a fan-out where *each* in-flight item holds a
-//! large allocation, so unbounded would multiply peak heap by the item count.
-//! When a site like that appears, add a `map_concurrent_with_budget` next to
-//! `map_concurrent` (a `Semaphore` acquired inside each task) and say why at
-//! the call site.
+//! Bounding is reserved for fan-outs where *each* in-flight item holds a large
+//! allocation. `map_concurrent_with_budget` polls at most a budget of item
+//! futures at once, limiting both queued work and those buffers.
 
-use futures_util::future::join_all;
+use futures_util::{
+    future::join_all,
+    stream::{self, StreamExt},
+};
 
 /// Runs `task_fn` over every item with **unbounded** concurrency, returning the
 /// results in input order.
@@ -32,6 +32,28 @@ where
     F: AsyncFn(T) -> R,
 {
     join_all(items.into_iter().map(|item| task_fn(item))).await
+}
+
+/// Runs `task_fn` with at most `budget` tasks in flight, returning results in
+/// input order. Queued items do not create their task futures until capacity is
+/// available, so buffers owned by those futures are bounded too.
+///
+/// # Panics
+///
+/// Panics if `budget` is zero.
+pub async fn map_concurrent_with_budget<T, F, R>(
+    items: impl IntoIterator<Item = T>,
+    budget: usize,
+    task_fn: F,
+) -> Vec<R>
+where
+    F: AsyncFn(T) -> R,
+{
+    stream::iter(items)
+        .map(|item| task_fn(item))
+        .buffered(budget)
+        .collect()
+        .await
 }
 
 // A fire-and-forget `spawn_concurrent` would belong here too, but it needs

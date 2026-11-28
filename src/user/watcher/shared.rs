@@ -24,6 +24,9 @@ pub(in crate::user) async fn prepare_pull(
     ctx: &UserCtx,
     guard: SessionGuard,
 ) -> Option<(IdentityContext, OwnedRwLockReadGuard<()>)> {
+    if !guard.is_current() {
+        return None;
+    }
     let lease = lock_identity_sync(&ctx.account_id).await;
     if !guard.is_current() {
         return None;

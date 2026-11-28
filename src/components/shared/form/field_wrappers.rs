@@ -5,17 +5,11 @@ use crate::config::validation::PIN_MIN_LEN;
 
 use dioxus::prelude::*;
 
-use super::use_form_field::FormFieldHandle;
+use super::{FormFieldHandle, apply_form_input};
 
-fn shared_oninput(
-    value: Signal<String>,
-    is_dirty: Signal<bool>,
-) -> impl FnMut(FormEvent) + 'static {
-    let mut value = value;
-    let mut is_dirty = is_dirty;
+fn shared_oninput(handle: FormFieldHandle) -> impl FnMut(FormEvent) + 'static {
     move |evt: FormEvent| {
-        value.set(evt.value());
-        is_dirty.set(true);
+        apply_form_input(handle, evt.value(), |_| {});
     }
 }
 
@@ -36,7 +30,7 @@ pub fn render_validated_password(
     autocomplete: Option<&str>,
     id: Option<&str>,
 ) -> Element {
-    let oninput = shared_oninput(handle.value, handle.is_dirty);
+    let oninput = shared_oninput(*handle);
     let error = (handle.error)();
 
     rsx! {
@@ -59,7 +53,7 @@ pub fn render_validated_password(
 }
 
 pub fn render_validated_pin(handle: &FormFieldHandle, label: &str, id: Option<&str>) -> Element {
-    let oninput = shared_oninput(handle.value, handle.is_dirty);
+    let oninput = shared_oninput(*handle);
     let error = (handle.error)();
     rsx! {
         div { class: "w-full",
@@ -82,7 +76,7 @@ pub fn render_validated_pin(handle: &FormFieldHandle, label: &str, id: Option<&s
 }
 
 pub fn render_validated_date(handle: &FormFieldHandle, label: &str, hint: Option<&str>) -> Element {
-    let oninput = shared_oninput(handle.value, handle.is_dirty);
+    let oninput = shared_oninput(*handle);
     let error = (handle.error)();
 
     rsx! {

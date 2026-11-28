@@ -11,7 +11,7 @@ use std::{
 };
 
 use crate::{config, helpers::async_utils::now_epoch_millis};
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use autosurgeon::{Hydrate, Reconcile};
 use dioxus::logger::tracing::warn;
 
@@ -236,19 +236,18 @@ pub fn message_seq_bounds(messages: &[FeedMessage]) -> (u64, u64) {
 /// The random suffix keeps IDs unique across devices on the same account:
 /// two devices sending at the same millisecond with equal counter values
 /// (both restart from 0 per process) would otherwise collide and be dropped
-/// as duplicates by `message_dedup_key`.
-pub fn generate_msg_id() -> Arc<str> {
+/// as duplicates by `message_dedup_key`. Randomness failure is returned to the
+/// caller; a predictable fallback could collide with another device's ID.
+pub fn generate_msg_id() -> Result<Arc<str>> {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let ts = now_epoch_millis();
     let counter = COUNTER.fetch_add(1, Ordering::Relaxed) & u64::from(u32::MAX);
     let mut rand_bytes = [0u8; 4];
-    if getrandom::fill(&mut rand_bytes).is_err() {
-        // Extremely unlikely; fall back to a timestamp-derived value rather
-        // than failing message creation.
-        rand_bytes.copy_from_slice(&(ts ^ ts.rotate_left(32)).to_le_bytes()[..4]);
-    }
+    getrandom::fill(&mut rand_bytes).context("Failed to generate message ID randomness")?;
     let rand = u32::from_le_bytes(rand_bytes);
-    Arc::from(format!("{ts:016x}{counter:08x}{rand:08x}").as_str())
+    Ok(Arc::from(
+        format!("{ts:016x}{counter:08x}{rand:08x}").as_str(),
+    ))
 }
 
 /// Metadata for a participant's feed record.

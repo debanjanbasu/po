@@ -36,17 +36,14 @@ autosurgeon = "0.14"
 # Deterministic scoped keypair derivation (same version veilid-core uses).
 ed25519-dalek = { version = "3", default-features = false, features = ["fast", "zeroize"] }
 # The `image` feature is required: qrcode's `Pixel for image::Luma<u8>` impl lives
-# behind it (qrcode-0.14.1 `src/render/image.rs:1` `#![cfg(feature = "image")]`),
-# and `platform/qr.rs` renders through `Renderer<Luma<u8>>`. It does NOT pull a
-# second `image` — the crate unifies with our direct `image` dep below.
-qrcode = { version = "0.14", default-features = false, features = ["image"] }
+# behind it, and `platform/qr.rs` renders through `Renderer<Luma<u8>>`. It does
+# NOT pull a second `image` — the crate unifies with our direct `image` dep below.
+qrcode = { version = "0.15", default-features = false, features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 rqrr = { version = "0.11", default-features = false }
-# True-LRU cache, pinned to 0.18 so it is the *same* copy rqrr 0.11 already
-# pulls in — no second lru in the build. The used API (new/put/get/pop_lru)
-# is identical across 0.18/0.19, and the `nightly` feature was never needed
-# (no hashbrown-typed API is used).
-lru = "0.18"
+# True-LRU cache for the app's bounded caches. rqrr's internal cache uses its
+# own lru release, so Cargo keeps both copies.
+lru = "0.19"
 base64 = "0.23"
 anyhow = "1"
 thiserror = "2"
@@ -195,7 +192,7 @@ desktop = ["dioxus/desktop"]
 mobile = ["dioxus/mobile"]
 aimd-dht = ["veilid-core/aimd-dht"]
 veilid-stats = ["veilid-core/stats"]
-# Tandem-harness seams (`src/config.rs`'s `e2e` module): environment-driven
+# Tandem-harness seams (`src/config/e2e.rs`): environment-driven
 # instance isolation, pairing credentials, and event marker lines. Explicit and
 # opt-in, for the harness's release-profile builds only — never part of a normal
 # build, and a distributed build never enables it.

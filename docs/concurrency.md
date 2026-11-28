@@ -221,7 +221,7 @@ where
 
 On native: delegates to `tokio::task::spawn_blocking`. On WASM: runs inline (WASM is single-threaded).
 
-**Use for:** Argon2 hashing, zstd compression (`ZSTD_LEVEL = 12`), dictionary training, complex math.
+**Use for:** Argon2 hashing, zstd compression (`ZSTD_LEVEL`), dictionary training, complex math.
 
 **Cannot access signals** — clone all data before entering the closure:
 
@@ -239,8 +239,8 @@ it fits in a frame. Budget per closure, rounded to what the frame can absorb at 
 
 | Closure work | Typical wasm cost | Verdict |
 |---|---|---|
-| zstd L12 compress of a ≤32 KB DHT row (`store/mode.rs`) | ~1–10 ms | fits, after the 22 → 12 change (`0187f38e`) |
-| zstd decompress of the same (`codec::run_codec`) | ~1–10 ms | fits; decode cost is level-independent, so the level change did not shrink it |
+| zstd compress of a ≤32 KB DHT row (`store/mode.rs`) | level 22 is required; cost depends on the workload and dictionary — no frame-budget claim is made | yield before entering and split/defer work where needed; trained dictionaries do not eliminate CPU cost |
+| zstd decompress of the same (`codec::run_codec`) | ~1–10 ms | fits; decode cost is level-independent |
 | automerge load/merge/reconcile of a 10–200 KB doc (`storage/store_trait`, `chat/storage/crud`, `chat/record/**`, `chat/watcher`) | ~5–150 ms | **chunk or yield** — several per sync drain |
 | Argon2id (m=19 MiB, t=2, p=1) for login/PIN/backup import | ~100–500 ms | once per action: yield around it, never in a render |
 | dictionary training (`compression/trainer`) | 2–20 s, hourly | **deferred to a hidden page on web** (`lifecycle::defer_heavy_work`, retried every `DEFERRED_RESUME_MS`) |
@@ -299,12 +299,13 @@ for its slowest member, so each item carries its own timeout
 (`route::SEND_TIMEOUT_MS`, `DHT_READ_TIMEOUT_MS`, …) rather than a shared
 budget that would only queue the fast ones behind the slow one.
 
-Bounding is **not** provided by `helpers::concurrency` on purpose. A budget
-would be load-bearing only for a fan-out where *each* in-flight future holds
-a large allocation, so unbounded would multiply peak heap by the item count;
-when such a site appears, add a `map_concurrent_with_budget` next to
-`map_concurrent` (a `Semaphore` acquired inside each task) and say why at the
-call site.
+Use `map_concurrent_with_budget(items, budget, task_fn)` when each in-flight
+future holds a large allocation. Its buffered stream creates and polls at most
+`budget` item futures at once, limiting both queued work and those buffers while
+preserving input result order. `veilid::table_store::Table::apply_batch` is the
+concurrent compression example: it pre-compresses stores with a four-job budget
+before starting the transaction, then applies deletes and compressed writes in
+one atomic commit.
 
 **Memory bounds are byte caps, never work-unit counts** — on every platform.
 A budget of 4 would mean "four futures in flight and every buffer they
@@ -324,7 +325,14 @@ will not help.
 | CPU-bound (>10ms blocking work) | `spawn_blocking` |
 | Long-running task tied to current session | `spawn_session_scoped` |
 | Fan-out over independent items | `concurrency::map_concurrent` (unbounded) |
-| Fan-out whose futures each hold a large allocation | add a per-site `map_concurrent_with_budget` (see above); none exists today |
+| Fan-out whose futures each hold a large allocation | `concurrency::map_concurrent_with_budget`; `Table::apply_batch` uses a four-job compression budget |
+
+App-message dispatch is deliberately **not** a fan-out. Its bounded-channel
+worker awaits each handler in strict FIFO with exactly one in-flight handler,
+creating no detached dispatch task tree, so the channel supplies real
+backpressure. A slow handler delays later queued messages; existing operation
+timeouts bound that work. See [peer-signaling.md § Receiving](peer-signaling.md#receiving)
+for signal-specific durability and session behavior.
 
 ---
 

@@ -221,6 +221,23 @@ Standalone functions that take `(op, &ctx)` and handle conversation-specific DHT
   - The SMPL head page and feed metadata are reconcile-written against the observed Automerge histories. Superseded writes re-reconcile `value` onto the newer DHT document and retry (fresh root per attempt — no double-root docs); the returned values are then unioned/persisted locally, so concurrent-device messages are not treated as last-writer-wins replacements. Without rotation the observed histories are kept as bases, preserving concurrent local edits.
   - At archive rotation (`head_page_start_seq` advanced — either the remote meta shows another device rotated, or this publish rotates itself), the head page and feed metadata are written from a **fresh Automerge root** (`local_doc = None`, reconciled against the network base). This bounds the head/meta docs to roughly one rotation cycle instead of growing by one cycle per rotation until they exceed Veilid's 32768-byte subkey ceiling; message content lives in archive pages + local store and is reconstructed by `union_messages_in_place` (merges are keyed on msg_id, so fresh roots lose no data).
 
+### Admission catch-up and durable local sends
+
+The full admission catch-up reconciles local work that reached storage before a
+process stopped: it scans local conversations, collects every `Pending` message
+ID, and enqueues one `ConvFeedSync` per conversation carrying those IDs. Normal
+queue deduplication folds that op into any existing feed op for the same
+conversation. The same pass retries setup for `Pending` contacts that have no
+conversation record key. Session-currency checks stop the pass after session
+cancellation, while load, enqueue, and setup failures are reported non-fatally;
+the durable local messages and pending contacts remain available for recovery.
+
+Message-ID generation is explicitly fallible and happens **before** message
+persistence. If the OS random-number source fails, send returns the error and
+leaves the user's draft unchanged and retryable; it never substitutes a
+predictable timestamp-only fallback that could collide with another device's
+message ID.
+
 ## Dual-Format Storage & Auto-Compaction
 
 ### Dual-Format Storage
@@ -232,7 +249,7 @@ Standalone functions that take `(op, &ctx)` and handle conversation-specific DHT
 | Col 0 | Cap'n Proto packed bytes | **Fast reads** — zero-copy deserialization for UI rendering |
 | Col 1 | Automerge document bytes, DEFLATE (`save()`) | **CRDT merge** — full change history for conflict-free sync |
 
-**Doc form**: every producer in `storage/automerge.rs` emits `save()` — automerge's own DEFLATE form — and zstd (`ZSTD_LEVEL` = 12) compresses it like any other row; there is no second stored form (see [compression.md](compression.md) for the measurements). `AutoCommit::load` reads either that form or the older uncompressed one, so pre-existing rows keep loading; a row still holding the old form is rewritten the next time it is reconciled or merged.
+**Doc form**: every producer in `storage/automerge.rs` emits `save()` — automerge's own DEFLATE form — and zstd (`ZSTD_LEVEL` = 22) compresses it like any other row; there is no second stored form (see [compression.md](compression.md) for the measurements). `AutoCommit::load` reads either that form or the older uncompressed one, so pre-existing rows keep loading; a row still holding the old form is rewritten the next time it is reconciled or merged.
 
 **Read path**: `load_local::<T>()` reads Col 0 (Cap'n Proto) first. Snapshot bytes pass through `schema_version::unpack_versioned(...)`, which requires an exact schema-version match; older and newer versions return `SchemaVersionError::Older` and `SchemaVersionError::Newer`, respectively. If Col 0 is missing, it returns `Default`.
 
@@ -276,7 +293,7 @@ Never hand-roll a delete of these keys: a partially wiped row (snapshot gone, do
 
 ### Snapshots
 
-`po_snapshots` is a two-column TableDB table of per-model/account history. Column 0 holds the snapshot index (initial binary format: `INDEX_FORMAT_VERSION = 1` version byte, count, `[timestamp, size]` pairs); column 1 holds each entry's restorable Cap'n Proto payload, keyed `model_id\0account_key\0timestamp_be` and zstd (`ZSTD_LEVEL` = 12) compressed through the `table_store::Table::store` API like every other TableDB row. Key features:
+`po_snapshots` is a two-column TableDB table of per-model/account history. Column 0 holds the snapshot index (initial binary format: `INDEX_FORMAT_VERSION = 1` version byte, count, `[timestamp, size]` pairs); column 1 holds each entry's restorable Cap'n Proto payload, keyed `model_id\0account_key\0timestamp_be` and zstd (`ZSTD_LEVEL` = 22) compressed through the `table_store::Table::store` API like every other TableDB row. Key features:
 
 - **Time travel**: `list_snapshots::<T>(account_key)` lists the retained entries from the index — no payload is inflated just to be listed. `restore_to_snapshot::<T>(account_key, timestamp)` restores a retained payload. Each snapshot's payload row is written **before** its index entry, so a failed payload write drops the entry instead of listing one that cannot be restored; a retained payload whose Cap'n Proto schema version differs from the running one fails with a downcastable `SchemaVersionError` (`Older`/`Newer`).
 - **Restore semantics**: restore decodes the payload via `decode_snapshot`, captures the pre-restore state as a new snapshot entry (so moving forward again is just restoring to a later entry in the list), then swaps state atomically via `replace_local`, which reconciles the restored value **into the retained automerge doc** and commits snapshot + doc + currentness marker in one transaction. Entries absent from the restored state become real CRDT delete operations, causally after the inserts the doc already merged, so the next publish deletes them on every device instead of resurrecting them — reconciling a fresh-root doc instead would race the DHT copy on `(lamport, actor)` and silently keep one root wholesale. Entries created concurrently on another device that this doc has never merged still survive (normal CRDT semantics). The backup-import Replace path (`import_all_raw`) applies the same reconcile-into-doc rule to the `ConversationIndex` row, in the same transaction as its message rows. A restore that matches the current state is a no-op.

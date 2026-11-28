@@ -287,7 +287,7 @@ for iOS/macOS/Android (`[bundle].icon` only affects `dx bundle`).
 | Serialization | recapn (Cap'n Proto) + automerge | Dual-format local storage |
 | Conflict resolution | automerge + autosurgeon | CRDT merge via `doc.merge()` |
 | Crypto | Veilid AEAD + Argon2 | E2E encrypted persisted data |
-| Compression | zstd level 12 + dictionary | Structured + plain domains |
+| Compression | zstd level 22 + dictionary | Structured + plain domains |
 
 ### Data Directories
 
@@ -387,7 +387,7 @@ The authoritative identity and conversation layouts, reserved subkeys, encryptio
 ---
 
 ## Compression
-Structured, Plain DHT transport frames, and local TableDB rows use zstd level 12 (`ZSTD_LEVEL = 12`; level 22 was dropped because web runs the codec inline on the UI thread). See [docs/compression.md](docs/compression.md) for framing, dictionary lifecycle, and local-storage policy.
+Structured, Plain DHT transport frames, and local TableDB rows all use zstd level 22 (`ZSTD_LEVEL`); the uniform level is deliberate regardless of CPU cost. See [docs/compression.md](docs/compression.md) for framing, dictionary lifecycle, and local-storage policy.
 
 ---
 

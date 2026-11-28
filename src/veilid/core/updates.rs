@@ -230,7 +230,7 @@ fn spawn_app_message_worker(
     shutdown_rx: Receiver<bool>,
 ) {
     spawn_mpsc_worker(receiver, shutdown_rx, |message| async move {
-        handle_app_message(message.message());
+        handle_app_message(message.message()).await;
     });
 }
 

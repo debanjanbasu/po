@@ -14,7 +14,6 @@ use crate::{
 pub(super) fn RetentionConfirmModal(
     retention_dialog_id: String,
     mut pending_policy: Signal<Option<RetentionPolicy>>,
-    retention_error: Signal<Option<String>>,
     retention_busy: Signal<bool>,
     on_confirm: Callback<RetentionPolicy>,
 ) -> Element {

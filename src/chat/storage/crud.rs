@@ -129,7 +129,7 @@ impl CachedConversations {
     }
 
     fn get(&mut self, key: &[u8]) -> Option<Arc<LocalConversation>> {
-        self.lru.get(&key.to_vec()).cloned()
+        self.lru.get(key).cloned()
     }
 
     fn put(&mut self, key: CacheKey, conv: Arc<LocalConversation>) {
@@ -162,7 +162,7 @@ impl CachedConversations {
     }
 
     fn remove(&mut self, key: &[u8]) {
-        if let Some(old) = self.lru.pop(&key.to_vec()) {
+        if let Some(old) = self.lru.pop(key) {
             self.bytes = self
                 .bytes
                 .saturating_sub(estimated_conversation_bytes(&old));
@@ -218,9 +218,8 @@ impl ConversationCaches {
     }
 
     fn remove(&self, key: &[u8]) {
-        let key = key.to_vec();
-        recover_poison(self.conversations.lock()).remove(&key);
-        recover_poison(self.packs.lock()).pop(&key);
+        recover_poison(self.conversations.lock()).remove(key);
+        recover_poison(self.packs.lock()).pop(key);
     }
 
     fn remove_all_for_account(&self, account_id: &str) {
@@ -242,7 +241,7 @@ impl ConversationCaches {
     /// [`Self::put_pack`].
     fn take_pack(&self, key: &[u8]) -> SubModelCache {
         recover_poison(self.packs.lock())
-            .pop(&key.to_vec())
+            .pop(key)
             .unwrap_or_default()
     }
 
@@ -495,6 +494,29 @@ pub async fn delete_for_account(account_id: &str, manifest_key: &str) -> Result<
     Ok(())
 }
 
+async fn snapshot_keys(table: &Table, account_id: &str) -> Result<Vec<(String, Bytes)>> {
+    let raw = table.raw();
+    let prefix = account_row_key(account_id, &[]);
+    Ok(account_rows_in_column(&raw, COL_SNAPSHOT, &prefix)
+        .await?
+        .into_iter()
+        .filter_map(|key| {
+            let manifest_key = str::from_utf8(&key[prefix.len()..]).ok()?.to_owned();
+            Some((manifest_key, key))
+        })
+        .collect())
+}
+
+/// Lists conversation manifest keys without loading their snapshot payloads.
+pub async fn list_manifest_keys(account_id: &str) -> Result<Vec<String>> {
+    let table = Table::open(CONV_TABLE, DUAL_FORMAT_TABLE_COLS).await?;
+    Ok(snapshot_keys(&table, account_id)
+        .await?
+        .into_iter()
+        .map(|(manifest_key, _)| manifest_key)
+        .collect())
+}
+
 /// Export all conversations for an account as `(manifest_key, packed bytes)`.
 ///
 /// Returns the raw Cap'n Proto snapshot rows — already versioned, so a later
@@ -502,32 +524,19 @@ pub async fn delete_for_account(account_id: &str, manifest_key: &str) -> Result<
 /// full-backup exporter.
 pub async fn export_all_raw(account_id: &str) -> Result<Vec<(String, Vec<u8>)>> {
     let table = Table::open(CONV_TABLE, DUAL_FORMAT_TABLE_COLS).await?;
-    let raw = table.raw();
-    let prefix = account_row_key(account_id, &[]);
-
-    let matching_keys: Vec<(String, Bytes)> = raw
-        .get_keys(COL_SNAPSHOT)
-        .await?
-        .into_iter()
-        .filter_map(|key| {
-            if !key.starts_with(&prefix) {
-                return None;
+    let loaded = try_join_all(snapshot_keys(&table, account_id).await?.into_iter().map(
+        |(manifest_key, key)| {
+            let table = &table;
+            async move {
+                Ok::<_, Error>(
+                    table
+                        .load_opt(COL_SNAPSHOT, &key)
+                        .await?
+                        .map(|bytes| (manifest_key, bytes.into())),
+                )
             }
-            let manifest_key = str::from_utf8(&key[prefix.len()..]).ok()?.to_owned();
-            Some((manifest_key, key))
-        })
-        .collect();
-    let loaded = try_join_all(matching_keys.into_iter().map(|(manifest_key, key)| {
-        let table = &table;
-        async move {
-            Ok::<_, Error>(
-                table
-                    .load_opt(COL_SNAPSHOT, &key)
-                    .await?
-                    .map(|bytes| (manifest_key, bytes.into())),
-            )
-        }
-    }))
+        },
+    ))
     .await?;
     Ok(loaded.into_iter().flatten().collect())
 }

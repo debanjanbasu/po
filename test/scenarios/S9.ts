@@ -38,7 +38,7 @@ export const description =
  * value below, read by the *creating* side only (the payload carries its own
  * `expires_at`), so the app still takes its real expiry path: a genuine,
  * expired payload rather than a simulated one. The seam is compiled out of
- * every non-harness build (`src/config.rs::e2e`).
+ * every non-harness build (`src/config/e2e.rs`).
  */
 const TTL_SECS = 15;
 export const seams = { PO_E2E_PAIRING_TTL_SECS: String(TTL_SECS) };

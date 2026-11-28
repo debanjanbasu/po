@@ -183,7 +183,6 @@ pub fn Snapshots() -> Element {
         RetentionConfirmModal {
             retention_dialog_id,
             pending_policy,
-            retention_error,
             retention_busy,
             on_confirm: move |policy| apply_retention_policy(policy, retention_error, retention_busy),
         }
@@ -206,7 +205,6 @@ fn SnapshotHistory(
     let mut create_error = use_signal(|| None::<String>);
     let mut creating = use_signal(|| false);
     let mut restoring = use_signal(|| false);
-    let mut restoring_target = use_signal(|| None::<u64>);
     let mut restore_error = use_signal(|| None::<String>);
     let mut restore_success = use_signal(|| None::<String>);
     // Snapshot pending confirmation: (surface, timestamp).
@@ -265,66 +263,62 @@ fn SnapshotHistory(
         creating.set(false);
     };
 
-    let restore_snapshot = std::rc::Rc::new(
-        move |surface: SyncSurface, timestamp: u64, dialog_id: String| async move {
-            if restoring() {
-                return;
+    let restore_snapshot = move |surface: SyncSurface, timestamp: u64, dialog_id: String| async move {
+        if restoring() {
+            return;
+        }
+        restoring.set(true);
+        restore_error.set(None);
+        restore_success.set(None);
+        let guard = SessionGuard::capture();
+        let result: AnyResult<bool> = (async {
+            let ctx = UserCtx::try_current().ok_or_else(|| anyhow!("No active session"))?;
+            let storage_key = ctx.storage_key();
+            let Some(_user_lock) = ctx.lock_for_account_commit(guard).await? else {
+                bail!("Session changed during restore");
+            };
+            let restored = restore_surface_snapshot(surface, storage_key, timestamp).await?;
+            if restored {
+                // Re-publish the restored state so other devices converge.
+                ctx.enqueue_touch(match surface {
+                    SyncSurface::Totp => OpType::Totp,
+                    SyncSurface::Contacts => OpType::ChatContacts,
+                    SyncSurface::Conversations => OpType::Chat,
+                })
+                .await?;
             }
-            restoring.set(true);
-            restoring_target.set(Some(timestamp));
-            restore_error.set(None);
-            restore_success.set(None);
-            let guard = SessionGuard::capture();
-            let result: AnyResult<bool> = (async {
-                let ctx = UserCtx::try_current().ok_or_else(|| anyhow!("No active session"))?;
-                let storage_key = ctx.storage_key();
-                let Some(_user_lock) = ctx.lock_for_account_commit(guard).await? else {
-                    bail!("Session changed during restore");
-                };
-                let restored = restore_surface_snapshot(surface, storage_key, timestamp).await?;
-                if restored {
-                    // Re-publish the restored state so other devices converge.
-                    ctx.enqueue_touch(match surface {
-                        SyncSurface::Totp => OpType::Totp,
-                        SyncSurface::Contacts => OpType::ChatContacts,
-                        SyncSurface::Conversations => OpType::Chat,
-                    })
-                    .await?;
+            Ok(restored)
+        })
+        .await;
+        if guard.is_current() {
+            match result {
+                Ok(true) => {
+                    restore_success.set(Some(format!(
+                        "Restored to {}.",
+                        format_local_ymdhm_from_millis(timestamp)
+                    )));
                 }
-                Ok(restored)
-            })
-            .await;
-            if guard.is_current() {
-                match result {
-                    Ok(true) => {
-                        restore_success.set(Some(format!(
-                            "Restored to {}.",
-                            format_local_ymdhm_from_millis(timestamp)
-                        )));
-                    }
-                    Ok(false) => {
-                        restore_success.set(Some("Already at this snapshot.".to_string()));
-                    }
-                    Err(error) => {
-                        report_nonfatal("settings.snapshots", "Snapshot restore failed", &error);
-                        let message = if error.downcast_ref::<SchemaVersionError>().is_some() {
-                            "This snapshot was written by a different app version and can't be restored."
-                        } else {
-                            "Restore failed. See Activity for details."
-                        };
-                        restore_error.set(Some(message.to_string()));
-                    }
+                Ok(false) => {
+                    restore_success.set(Some("Already at this snapshot.".to_string()));
+                }
+                Err(error) => {
+                    report_nonfatal("settings.snapshots", "Snapshot restore failed", &error);
+                    let message = if error.downcast_ref::<SchemaVersionError>().is_some() {
+                        "This snapshot was written by a different app version and can't be restored."
+                    } else {
+                        "Restore failed. See Activity for details."
+                    };
+                    restore_error.set(Some(message.to_string()));
                 }
             }
-            // Component-local state: clear it on every path, or a session
-            // change mid-restore leaves the modal open and every Restore
-            // button disabled. Only the copy above is session-gated.
-            close_modal_dialog(&dialog_id);
-            pending_restore.set(None);
-            restoring_target.set(None);
-            restoring.set(false);
-        },
-    );
+        }
+        // Component-local state: clear it on every path, or a session
+        // change mid-restore leaves the modal open and every Restore
+        // button disabled. Only the copy above is session-gated.
+        close_modal_dialog(&dialog_id);
+        pending_restore.set(None);
+        restoring.set(false);
+    };
 
     let entries_guard = entries.read();
     let entries_loading = *entries.state().read() == UseResourceState::Pending;
@@ -469,7 +463,10 @@ fn SnapshotHistory(
                                 div { class: "timeline-end bg-base-200 rounded-field px-3 py-2 ms-4",
                                     div { class: "flex items-center justify-end gap-2",
                                         span { class: "text-base-content/60", "{format_binary_bytes(entry.size)}" }
-                                        if restoring() && restoring_target() == Some(entry.timestamp) {
+                                        if restoring()
+                                            && pending_restore().map(|(_, timestamp)| timestamp)
+                                                == Some(entry.timestamp)
+                                        {
                                             span { class: "status status-primary" }
                                         }
                                         button {
@@ -521,7 +518,6 @@ fn SnapshotHistory(
                 pending_restore,
                 restoring,
                 on_confirm: move |(surface, timestamp)| {
-                    let restore_snapshot = restore_snapshot.clone();
                     let dialog_id = restore_dialog_id.clone();
                     async move {
                         restore_snapshot(surface, timestamp, dialog_id).await;

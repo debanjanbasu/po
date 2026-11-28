@@ -158,38 +158,38 @@ pub(super) async fn load_decoded_rows_by_ids(
         return Ok(Vec::new());
     }
 
-    // Parallel fetch phase: issue DB reads concurrently in bounded,
-    // order-preserving chunks. Table is Arc-backed, so cloning is a
-    // pointer bump.
-    let mut read_results = Vec::with_capacity(ids.len());
+    let mut ops = Vec::with_capacity(ids.len());
     for chunk in ids.chunks(LOAD_OPS_CHUNK) {
-        let chunk_results = join_all(chunk.iter().map(|&id| {
+        // Parallel fetch phase: issue DB reads concurrently in bounded,
+        // order-preserving chunks. Table is Arc-backed, so cloning is a
+        // pointer bump.
+        let read_results = join_all(chunk.iter().map(|&id| {
             let table = table.clone();
             async move { (id, table.load_opt(col, &id_to_key(id)).await) }
         }))
         .await;
-        read_results.extend(chunk_results);
-    }
 
-    // Sequential processing phase: deserialize results and handle errors
-    // (error handling has side effects: delete + index mutation).
-    let mut ops = Vec::with_capacity(ids.len());
-    for (id, read_result) in read_results {
-        // A transient single-row read failure must not stall the whole drain.
-        let bytes = match read_result {
-            Ok(Some(bytes)) => bytes,
-            Ok(None) => continue,
-            Err(error) => {
-                report_nonfatal(
-                    "sync.pending_ops",
-                    "Skipping unreadable queue row",
-                    format!("id={id}: {error:#}"),
-                );
-                continue;
+        // Sequential processing phase: deserialize results and handle errors
+        // (error handling has side effects: delete + index mutation).
+        // Decoding each chunk before fetching the next keeps only one chunk
+        // of raw row bytes live instead of every requested row at once.
+        for (id, read_result) in read_results {
+            // A transient single-row read failure must not stall the whole drain.
+            let bytes = match read_result {
+                Ok(Some(bytes)) => bytes,
+                Ok(None) => continue,
+                Err(error) => {
+                    report_nonfatal(
+                        "sync.pending_ops",
+                        "Skipping unreadable queue row",
+                        format!("id={id}: {error:#}"),
+                    );
+                    continue;
+                }
+            };
+            if let Some(op) = decode_row_for_id(col, id, &bytes).await? {
+                ops.push((id, op));
             }
-        };
-        if let Some(op) = decode_row_for_id(col, id, &bytes).await? {
-            ops.push((id, op));
         }
     }
     Ok(ops)

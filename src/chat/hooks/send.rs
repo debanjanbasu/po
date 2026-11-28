@@ -142,6 +142,7 @@ async fn save_and_queue_message(
     if text.len() > config::chat::MAX_MESSAGE_BYTES {
         return Ok(SendOutcome::Blocked(SendBlock::TooLong));
     }
+    let msg_id = generate_msg_id()?;
     let mut blocked = None;
     let mut out: Option<(FeedMessage, u32, Vec<String>)> = None;
     let mutated = storage::mutate_for_account(&ctx.account_id, &ck, |conv| {
@@ -194,7 +195,7 @@ async fn save_and_queue_message(
             sender_username: Arc::clone(&ctx.username),
             content: Arc::clone(&text),
             timestamp,
-            msg_id: generate_msg_id(),
+            msg_id: Arc::clone(&msg_id),
             status: MessageStatus::Pending,
         };
         insert_sorted_message(Arc::make_mut(&mut conv.messages), msg.clone());

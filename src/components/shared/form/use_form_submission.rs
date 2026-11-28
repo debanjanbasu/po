@@ -2,12 +2,12 @@
 //!
 //! Two pieces every hand-rolled form in this crate repeats:
 //!
-//! - [`use_form_input`] — one `oninput` closure that applies the change to a
-//!   field handle and lets the caller react (clearing errors, resetting an
+//! - [`apply_form_input`] — one `oninput` closure that applies the change to
+//!   a field handle and lets the caller react (clearing errors, resetting an
 //!   attempt tracker) *before* the new value lands. It only ever writes the
 //!   value into the signal; it never touches the DOM node, so IME composition
 //!   keeps working exactly as it does with a hand-written handler.
-//! - [`use_auto_submit`] — the effect shape of the reactive auto-submit
+//! - [`AutoSubmitGate`] — the effect shape of the reactive auto-submit
 //!   forms: fire `submit` once per distinct input tuple while valid and idle,
 //!   and never re-fire the same tuple (duplicate-attempt suppression).
 
@@ -19,17 +19,11 @@ use super::FormFieldHandle;
 ///
 /// The ordering matters at the call sites: `on_change` clears stale errors and
 /// attempt trackers while it can still observe the *old* value, then the field
-/// itself updates and validation/dirty state follow. Returns the new value so
-/// a caller can keep chaining (e.g. a PIN filter that also edits the field).
-pub fn apply_form_input(
-    mut field: FormFieldHandle,
-    next: String,
-    mut on_change: impl FnMut(&str),
-) -> String {
+/// itself updates and validation/dirty state follow.
+pub fn apply_form_input(mut field: FormFieldHandle, next: String, mut on_change: impl FnMut(&str)) {
     on_change(&next);
-    field.value.set(next.clone());
+    field.value.set(next);
     field.is_dirty.set(true);
-    next
 }
 
 /// One deduped auto-submit gate: remember the last input tuple that was
@@ -84,10 +78,12 @@ impl<T: PartialEq + 'static> AutoSubmitGate<T> {
             .as_ref()
             .zip(retiring)
             .is_some_and(|(held, retired)| held == retired);
-        if matches_retiring || self.last_attempt.peek().is_none() {
+        if retiring.is_some() && !matches_retiring {
             return;
         }
-        *self.last_attempt.write() = None;
+        if self.last_attempt.peek().is_some() {
+            *self.last_attempt.write() = None;
+        }
     }
 
     /// Unconditionally forgets the last attempt (form reset, superseded

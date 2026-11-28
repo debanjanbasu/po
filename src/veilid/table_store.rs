@@ -8,13 +8,15 @@ use std::{
 
 use anyhow::{Context, Error, Result};
 use bytes::Bytes;
-use futures_util::future::try_join_all;
 use tokio::sync::OwnedMutexGuard;
 use veilid_core::TableDB;
 
 use crate::{
     compression::codec as compression,
-    helpers::store_lock::{lock_store, recover_poison},
+    helpers::{
+        concurrency::map_concurrent_with_budget,
+        store_lock::{lock_store, recover_poison},
+    },
     veilid::core::ensure_local_api,
 };
 
@@ -199,14 +201,17 @@ impl Table {
             return Ok(());
         }
 
-        // Pre-compress all values before starting the transaction.
+        // Pre-compress before starting the transaction, with four in-flight
+        // jobs to bound raw input copies and blocking compression work.
         let compressed_entries: Vec<(u32, &[u8], Bytes)> =
-            try_join_all(stores.iter().map(|&(col, key, value)| async move {
+            map_concurrent_with_budget(stores.iter(), 4, async |&(col, key, value)| {
                 let compressed =
                     compression::compress_structured(Bytes::copy_from_slice(value)).await?;
                 Ok::<_, Error>((col, key, compressed))
-            }))
-            .await?;
+            })
+            .await
+            .into_iter()
+            .collect::<Result<_>>()?;
 
         // Acquire row locks in deterministic order to prevent deadlocks.
         let mut lock_keys: Vec<Vec<u8>> = deletes

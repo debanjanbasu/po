@@ -85,9 +85,12 @@ async fn handle_identity_change(change: Box<VeilidValueChange>, change_key: &str
     // only, so for any other leading subkey the beacon must be read back
     // from the network (handle_watch_change falls back on `None`).
     if change.subkeys.contains(layout::SUBKEY_PAIRING_BEACON) {
-        let raw = (change.subkeys.first() == Some(layout::SUBKEY_PAIRING_BEACON))
-            .then(|| change.value.as_ref().map(|v| v.data().to_vec()))
-            .flatten();
+        let raw = match change.subkeys.first() {
+            Some(subkey) if subkey == layout::SUBKEY_PAIRING_BEACON => {
+                change.value.as_ref().map(|value| value.data().to_vec())
+            }
+            _ => None,
+        };
         user::pairing_beacon::handle_watch_change(change.key.clone(), raw).await;
     }
 

@@ -28,7 +28,7 @@ mod pending_invites;
 pub(in crate::chat) use crud::save_for_account;
 pub use crud::{
     clear_cache, delete_all_for_account, delete_for_account, export_all_raw, import_all_raw,
-    load_for_account, mutate_for_account,
+    list_manifest_keys, load_for_account, mutate_for_account,
 };
 pub(in crate::chat) use pending_invites::{
     MAX_PENDING_INVITES, pending_invite_is_recent, sort_and_cap,

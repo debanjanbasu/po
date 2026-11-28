@@ -16,16 +16,15 @@
 
 use dioxus::prelude::*;
 
-#[cfg(all(feature = "desktop", target_os = "macos"))]
-use dioxus::desktop::LogicalPosition;
 #[cfg(all(feature = "desktop", target_os = "linux"))]
 use dioxus::desktop::tao::window::ResizeDirection;
+#[cfg(all(feature = "desktop", target_os = "macos"))]
+use dioxus::desktop::{DesktopContext, LogicalPosition};
 #[cfg(all(
     feature = "desktop",
     any(target_os = "macos", target_os = "windows", target_os = "linux")
 ))]
 use dioxus::desktop::{
-    DesktopContext,
     tao::event::{Event, WindowEvent},
     use_window, use_wry_event_handler,
 };
@@ -99,7 +98,10 @@ fn desktop_chrome() -> Element {
             class: "window-chrome fixed inset-x-0 top-0 z-[1200]",
             onmousedown: move |event: MouseEvent| {
                 #[cfg(any(target_os = "windows", target_os = "linux"))]
-                press.drag();
+                {
+                    let _ = event;
+                    press.drag();
+                }
                 #[cfg(target_os = "macos")]
                 anchor.set(drag_anchor(&press, &event));
             },

@@ -20,7 +20,7 @@ use crate::{
         async_utils::now_epoch_secs,
         encryption::{
             account_id_bytes, account_id_string, crypto_system, crypto_system_sync,
-            decrypt_with_nonce, encrypt_with_nonce, hash_password_for_account,
+            encrypt_with_nonce, hash_password_for_account,
         },
         spawn_blocking,
         store_lock::lock_store,
@@ -36,7 +36,7 @@ use base64::{DecodeError, Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use thiserror::Error as ThisError;
 use veilid_core::{
     BareKeyPair, BareOpaqueRecordKey, BarePublicKey, BareRecordKey, BareSecretKey,
-    BareSharedSecret, CryptoKind, KeyPair, RecordKey,
+    BareSharedSecret, CryptoKind, KeyPair, Nonce, RecordKey, VeilidAPIError,
 };
 use zeroize::Zeroizing;
 
@@ -282,9 +282,22 @@ pub async fn decrypt_pairing_payload(
     // result so the success path can reuse the plaintext and password hash.
     let decrypted: RefCell<Option<DecryptedSecret>> = RefCell::new(None);
     let outcome = store::gated_attempt(attempt_key.as_slice(), async || {
-        let result = decrypt_pairing_secret(body, &account_id, password, pin).await;
-        let verified = result.is_ok();
-        *decrypted.borrow_mut() = Some(result);
+        let verified = match decrypt_pairing_secret(body, &account_id, password, pin).await {
+            Ok(secret) => {
+                *decrypted.borrow_mut() = Some(Ok(secret));
+                true
+            }
+            Err(error)
+                if matches!(
+                    error.downcast_ref::<PairingError>(),
+                    Some(PairingError::InvalidCredentials)
+                ) =>
+            {
+                *decrypted.borrow_mut() = Some(Err(error));
+                false
+            }
+            Err(error) => return Err(error),
+        };
         Ok::<bool, AnyhowError>(verified)
     })
     .await?;
@@ -333,7 +346,21 @@ async fn decrypt_pairing_secret(
     let plaintext = spawn_blocking(move || -> AnyhowResult<Zeroizing<Vec<u8>>> {
         let cs = crypto_system_sync()?;
         let pin_secret = cs.derive_shared_secret(&material, PAIRING_DOMAIN_KEY)?;
-        Ok(Zeroizing::new(decrypt_with_nonce(&data, &pin_secret, &cs)?))
+        let nonce_len = cs.nonce_length();
+        if data.len() < nonce_len {
+            return Err(anyhow!("ciphertext too short for nonce"));
+        }
+        let nonce = Nonce::new(&data[..nonce_len]);
+        // Both typed inputs come from this crypto system, so `Generic` here is
+        // AEAD authentication failure, not a key/nonce initialization failure.
+        let plaintext = match cs.decrypt_aead(&data[nonce_len..], &nonce, &pin_secret, None) {
+            Ok(plaintext) => plaintext,
+            Err(VeilidAPIError::Generic { .. }) => {
+                return Err(PairingError::InvalidCredentials.into());
+            }
+            Err(error) => return Err(error.into()),
+        };
+        Ok(Zeroizing::new(plaintext))
     })
     .await??;
     Ok((plaintext, password_hash))

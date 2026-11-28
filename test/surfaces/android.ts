@@ -90,7 +90,7 @@ export async function create(
 export class AndroidSurface {
   readonly name = 'android';
   // `env` is true: the seams travel in the launch intent's extras, which the
-  // app reads as the same names the environment uses (src/config.rs::e2e).
+  // app reads as the same names the environment uses (src/config/e2e.rs).
   readonly caps = { env: true, deepLink: true };
   readonly build: Dict = {};
   private apk: string;
@@ -218,7 +218,7 @@ export class AndroidSurface {
     // `am start` cannot set environment variables for the app it starts, so
     // the seams travel as intent extras: `--es po_e2e_<KEY> <value>`. The app
     // strips the `po_e2e_` prefix and reads the same names the environment
-    // uses (src/config.rs::e2e, native/android/MainActivity.kt).
+    // uses (src/config/e2e.rs, native/android/MainActivity.kt).
     //
     // The instance name is unique per run: the emulator keeps the app's data
     // between runs, and a remembered session would restore straight into the
@@ -631,7 +631,7 @@ class CdpPage {
       const { id, result } = message;
       if (typeof id !== 'number' || typeof result !== 'object' || result === null) return;
       const settle = this.pending.get(id);
-      if (settle === undefined) return;
+      if (typeof settle !== 'function') return;
       this.pending.delete(id);
       if ('exceptionDetails' in result && result.exceptionDetails !== undefined) {
         // The probe itself threw inside the page (a malformed selector): name

@@ -9,7 +9,7 @@ mod registry;
 
 use std::{
     collections::HashMap,
-    io::Cursor,
+    io::{Cursor, Read},
     sync::{Arc, LazyLock, Mutex, RwLock},
 };
 
@@ -17,6 +17,7 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 use bytes::Bytes;
 use zstd::{
     bulk::{Compressor, Decompressor},
+    stream::read::Decoder,
     zstd_safe::{compress_bound, get_dict_id_from_frame, get_frame_content_size},
 };
 
@@ -217,6 +218,7 @@ pub(in crate::compression) fn decompress_structured_with_dictionary(
                 .context("failed to create structured decompressor")
         },
         payload,
+        Some(prepared.bytes()),
         config::compression::MAX_DECOMPRESSED_BYTES,
     )
 }
@@ -237,6 +239,7 @@ pub(in crate::compression) fn decompress_plain_payload_blocking_bounded(
         DictionaryId::Plain,
         || Decompressor::new().context("failed to create plain decompressor"),
         data,
+        None,
         max_output_bytes,
     )
 }
@@ -245,6 +248,7 @@ fn decompress_with_pool(
     key: DictionaryId,
     create: impl FnOnce() -> Result<Decompressor<'static>>,
     data: &[u8],
+    dictionary: Option<&[u8]>,
     max_output_bytes: usize,
 ) -> Result<Vec<u8>> {
     let frame_size = get_frame_content_size(data)
@@ -252,21 +256,37 @@ fn decompress_with_pool(
         .flatten()
         .map(usize::try_from)
         .transpose()?;
-    if let Some(frame_size) = frame_size {
+    let Some(frame_size) = frame_size else {
+        let read_limit = u64::try_from(max_output_bytes)?
+            .checked_add(1)
+            .context("decompression limit is too large")?;
+        let decoder = Decoder::with_dictionary(data, dictionary.unwrap_or_default())
+            .context("failed to create streaming decompressor")?
+            // Match bulk decompression: decode one frame, not concatenated frames.
+            .single_frame();
+        let mut decompressed = Vec::new();
+        decoder
+            .take(read_limit)
+            .read_to_end(&mut decompressed)
+            .map_err(|e| anyhow!("decompression failed: {e}"))?;
         ensure!(
-            frame_size <= max_output_bytes,
+            decompressed.len() <= max_output_bytes,
             "decompressed payload exceeds {max_output_bytes} byte limit"
         );
-    }
+        return Ok(decompressed);
+    };
+    ensure!(
+        frame_size <= max_output_bytes,
+        "decompressed payload exceeds {max_output_bytes} byte limit"
+    );
     let pool = codec_pools().decompressor_pool(key);
     let mut decompressor = match pool.take() {
         Some(decompressor) => decompressor,
         None => create()?,
     };
 
-    let capacity = frame_size.unwrap_or(max_output_bytes);
     let decompressed = decompressor
-        .decompress(data, capacity)
+        .decompress(data, frame_size)
         .map_err(|e| anyhow!("decompression failed: {e}"));
     pool.put(decompressor);
     decompressed

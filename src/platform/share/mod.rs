@@ -305,21 +305,6 @@ pub async fn copy_to_clipboard(text: &str) -> Result<(), ShareError> {
     })
 }
 
-#[cfg(not(any(
-    target_arch = "wasm32",
-    target_os = "ios",
-    target_os = "macos",
-    target_os = "android"
-)))]
-pub const fn download_bytes(
-    bytes: &[u8],
-    filename: &str,
-    mime: &str,
-) -> Result<DownloadResult, ShareError> {
-    let _ = (bytes, filename, mime);
-    Err(ShareError::Unsupported)
-}
-
 #[cfg(any(target_os = "ios", target_os = "macos", target_os = "android"))]
 fn download_bytes_sync(
     bytes: &[u8],

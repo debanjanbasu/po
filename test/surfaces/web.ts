@@ -125,7 +125,11 @@ async function serveStatic(root: string): Promise<{ port: number; close(): Promi
       try {
         const url = (req.url ?? '/').split('?')[0];
         let path = resolve(rootPath, `.${url}`);
-        if (path !== rootPath && !path.startsWith(`${rootPath}${sep}`)) path = join(rootPath, 'index.html');
+        if (path !== rootPath && !path.startsWith(`${rootPath}${sep}`)) {
+          res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+          res.end('Forbidden');
+          return;
+        }
         try {
           if ((await stat(path)).isDirectory()) path = join(path, 'index.html');
         } catch {
